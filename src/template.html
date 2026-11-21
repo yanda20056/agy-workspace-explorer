@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workspace Explorer</title>
+  <style>
+    :root,
+    [data-theme="dark"] {
+      --bg-primary: var(--color-background-primary, #18181b);
+      --bg-secondary: var(--color-background-secondary, #202024);
+      --bg-tertiary: var(--color-background-tertiary, #2a2a30);
+      --text-primary: var(--color-text-primary, #ececef);
+      --text-secondary: var(--color-text-secondary, #a1a1aa);
+      --text-tertiary: var(--color-text-tertiary, #71717a);
+      --border-primary: var(--color-border-primary, rgba(255, 255, 255, 0.1));
+      --border-secondary: var(--color-border-secondary, rgba(255, 255, 255, 0.06));
+      --accent: var(--color-ring-primary, #3b82f6);
+      --accent-soft: rgba(59, 130, 246, 0.16);
+      --menu-shadow: 0 10px 30px rgba(0, 0, 0, 0.42);
+      --font-ui: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+      --font-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace);
+    }
+
+    [data-theme="light"] {
+      --bg-primary: var(--color-background-primary, #ffffff);
+      --bg-secondary: var(--color-background-secondary, #f4f4f5);
+      --bg-tertiary: var(--color-background-tertiary, #e4e4e7);
+      --text-primary: var(--color-text-primary, #18181b);
+      --text-secondary: var(--color-text-secondary, #52525b);
+      --text-tertiary: var(--color-text-tertiary, #71717a);
+      --border-primary: var(--color-border-primary, rgba(0, 0, 0, 0.12));
+      --border-secondary: var(--color-border-secondary, rgba(0, 0, 0, 0.06));
+      --accent: var(--color-ring-primary, #2563eb);
+      --accent-soft: rgba(37, 99, 235, 0.12);
+      --menu-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      overflow: hidden;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      line-height: 1.4;
+      user-select: none;
+    }
+
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      min-height: 420px;
+      width: 100%;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border-primary);
+      background: var(--bg-secondary);
+      flex-shrink: 0;
+    }
+
+    .header-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .project-select {
+      flex: 1;
+      min-width: 0;
+      height: 28px;
+      padding: 0 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border-primary);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 12.5px;
+      font-weight: 500;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .project-select:focus {
+      border-color: var(--accent);
+    }
+
+    .icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+
+    .icon-btn:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .icon-btn.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: rgba(59, 130, 246, 0.35);
+    }
+
+    .search-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex: 1;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 8px;
+      color: var(--text-tertiary);
+      pointer-events: none;
+      display: flex;
+    }
+
+    .search-input {
+      width: 100%;
+      height: 28px;
+      padding: 0 92px 0 28px;
+      border-radius: 6px;
+      border: 1px solid var(--border-primary);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 12.5px;
+      outline: none;
+      transition: border-color 0.12s;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent);
+    }
+
+    .search-input.invalid {
+      border-color: var(--color-border-danger, #ef4444);
+    }
+
+    .search-input::placeholder {
+      color: var(--text-tertiary);
+    }
+
+    .search-controls {
+      position: absolute;
+      right: 3px;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .search-opt-btn {
+      height: 20px;
+      min-width: 22px;
+      padding: 0 4px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--text-tertiary);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+    }
+
+    .search-opt-btn:hover:not(:disabled) {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .search-opt-btn.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: rgba(59, 130, 246, 0.38);
+    }
+
+    .search-opt-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    .search-clear {
+      width: 18px;
+      height: 20px;
+      border: none;
+      background: transparent;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      border-radius: 4px;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      padding: 0;
+    }
+
+    .search-clear.visible {
+      display: inline-flex;
+    }
+
+    .search-clear:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    mark.hl {
+      background: rgba(234, 179, 8, 0.28);
+      color: inherit;
+      border-radius: 2px;
+      padding: 0 0.5px;
+    }
+
+    .subbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+      padding: 0 2px;
+    }
+
+    .subbar-path {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--font-mono);
+    }
+
+    .badge {
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+      font-size: 10.5px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* Main split area */
+    .main {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .tree-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 4px 0 12px 0;
+    }
+
+    .tree-scroll::-webkit-scrollbar,
+    .preview-body::-webkit-scrollbar {
+      width: 7px;
+      height: 7px;
+    }
+
+    .tree-scroll::-webkit-scrollbar-thumb,
+    .preview-body::-webkit-scrollbar-thumb {
+      background: var(--border-primary);
+      border-radius: 4px;
+    }
+
+    /* Tree rows */
+    .tree-row {
+      position: relative;
+      display: flex;
+      align-items: center;
+      height: 27px;
+      padding-right: 6px;
+      cursor: pointer;
+      color: var(--text-primary);
+      transition: background 0.08s;
+    }
+
+    .tree-row:hover {
+      background: var(--bg-secondary);
+    }
+
+    .tree-row.selected {
+      background: var(--accent-soft);
+    }
+
+    .tree-row.project-root-row {
+      height: 30px;
+      font-weight: 600;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-secondary);
+      border-bottom: 1px solid var(--border-secondary);
+      margin-top: 4px;
+    }
+
+    .tree-row.project-root-row:first-child {
+      margin-top: 0;
+      border-top: none;
+    }
+
+    .tree-row.hidden-item .row-name {
+      opacity: 0.65;
+    }
+
+    .chevron {
+      width: 16px;
+      height: 16px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-tertiary);
+      flex-shrink: 0;
+      transition: transform 0.12s ease;
+    }
+
+    .chevron.open {
+      transform: rotate(90deg);
+    }
+
+    .chevron.spacer {
+      visibility: hidden;
+    }
+
+    .file-icon {
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: 5px;
+      flex-shrink: 0;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .row-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12.8px;
+    }
+
+    .row-sub {
+      margin-left: 8px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 45%;
+      font-family: var(--font-mono);
+    }
+
+    .row-actions {
+      display: none;
+      align-items: center;
+      gap: 2px;
+      margin-left: 4px;
+      flex-shrink: 0;
+    }
+
+    .tree-row:hover .row-actions,
+    .tree-row.selected .row-actions {
+      display: inline-flex;
+    }
+
+    .mini-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 21px;
+      min-width: 21px;
+      padding: 0 4px;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 11px;
+    }
+
+    .mini-btn:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    /* Empty / loading */
+    .empty-state {
+      padding: 28px 16px;
+      text-align: center;
+      color: var(--text-tertiary);
+      font-size: 12.5px;
+    }
+
+    /* Inline Preview Drawer */
+    .preview-pane {
+      display: none;
+      flex-direction: column;
+      height: 46%;
+      min-height: 140px;
+      max-height: 80%;
+      border-top: 1px solid var(--border-primary);
+      background: var(--bg-primary);
+      flex-shrink: 0;
+    }
+
+    .preview-pane.open {
+      display: flex;
+    }
+
+    .preview-resizer {
+      height: 4px;
+      cursor: ns-resize;
+      background: transparent;
+      flex-shrink: 0;
+    }
+
+    .preview-resizer:hover {
+      background: var(--accent-soft);
+    }
+
+    .preview-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px 6px 10px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-primary);
+      flex-shrink: 0;
+    }
+
+    .preview-title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .preview-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 8px 10px;
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre;
+      user-select: text;
+      color: var(--text-primary);
+    }
+
+    /* Context Menu */
+    .ctx-menu {
+      position: fixed;
+      z-index: 9999;
+      min-width: 204px;
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border-primary);
+      background: var(--bg-secondary);
+      box-shadow: var(--menu-shadow);
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .ctx-menu.open {
+      display: flex;
+    }
+
+    .ctx-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 6px 8px;
+      border: none;
+      border-radius: 5px;
+      background: transparent;
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 12.5px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .ctx-item:hover {
+      background: var(--bg-tertiary);
+    }
+
+    .ctx-sep {
+      height: 1px;
+      margin: 3px 4px;
+      background: var(--border-primary);
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%) translateY(12px);
+      max-width: 90%;
+      padding: 6px 12px;
+      border-radius: 6px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-primary);
+      color: var(--text-primary);
+      font-size: 12px;
+      box-shadow: var(--menu-shadow);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.16s, transform 0.16s;
+      z-index: 10000;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="header">
+      <div class="header-row">
+        <select id="projectSelect" class="project-select" title="切换工程"></select>
+        <button id="btnAllMode" class="icon-btn" title="切换：全部工程视图 / 当前工程视图">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+          </svg>
+        </button>
+        <button id="btnCollapseAll" class="icon-btn" title="全部折叠">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m7 20 5-5 5 5"></path>
+            <path d="m7 4 5 5 5-5"></path>
+          </svg>
+        </button>
+        <button id="btnToggleHidden" class="icon-btn active" title="显示/隐藏以 . 开头的隐藏文件">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        </button>
+        <button id="btnRefresh" class="icon-btn" title="刷新目录">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+            <path d="M3 3v5h5"></path>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+            <path d="M16 16h5v5"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="header-row">
+        <div class="search-wrap">
+          <span class="search-icon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"></circle>
+              <path d="m21 21-4.3-4.3"></path>
+            </svg>
+          </span>
+          <input id="searchInput" class="search-input" type="text" placeholder="模糊搜索文件名或路径..." />
+          <div class="search-controls">
+            <button id="searchClear" class="search-clear" title="清除搜索">&times;</button>
+            <button id="btnFuzzy" class="search-opt-btn active" title="模糊查找 (Fuzzy Match) — 关闭时为精确子串匹配">~</button>
+            <button id="btnCase" class="search-opt-btn" title="区分大小写 (Match Case)">Aa</button>
+            <button id="btnRegex" class="search-opt-btn" title="使用正则表达式 (Use Regular Expression)">.*</button>
+          </div>
+        </div>
+      </div>
+      <div class="subbar">
+        <span id="subbarPath" class="subbar-path">正在加载工程...</span>
+        <span id="subbarBadge" class="badge"></span>
+      </div>
+    </div>
+
+    <div class="main">
+      <div id="treeContainer" class="tree-scroll">
+        <div class="empty-state">正在连接 Workspace Explorer...</div>
+      </div>
+
+      <div id="previewPane" class="preview-pane">
+        <div id="previewResizer" class="preview-resizer" title="拖动调整预览区高度"></div>
+        <div class="preview-header">
+          <span id="previewTitle" class="preview-title"></span>
+          <button id="btnPreviewCopyRel" class="mini-btn" title="复制相对路径">相对路径</button>
+          <button id="btnPreviewCopyAbs" class="mini-btn" title="复制绝对路径">绝对路径</button>
+          <button id="btnPreviewOpenNative" class="mini-btn" title="在原生标签页打开">标签页打开</button>
+          <button id="btnPreviewClose" class="icon-btn" style="width:22px;height:22px" title="关闭预览">&times;</button>
+        </div>
+        <pre id="previewBody" class="preview-body"></pre>
+      </div>
+    </div>
+  </div>
+
+  <div id="ctxMenu" class="ctx-menu"></div>
+  <div id="toast" class="toast"></div>
+
+  <!--__BUNDLE_SCRIPT__-->
+</body>
+</html>
