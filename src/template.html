@@ -499,6 +499,98 @@
       background: var(--accent-soft);
     }
 
+    /* Viewer Tab Bar */
+    .preview-tabs {
+      display: none;
+      align-items: stretch;
+      height: 32px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-primary);
+      overflow-x: auto;
+      overflow-y: hidden;
+      flex-shrink: 0;
+      scrollbar-width: none;
+    }
+
+    .preview-tabs.has-tabs {
+      display: flex;
+    }
+
+    .preview-tabs::-webkit-scrollbar {
+      height: 3px;
+    }
+
+    .preview-tabs::-webkit-scrollbar-thumb {
+      background: var(--border-primary);
+    }
+
+    .preview-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 0 8px 0 10px;
+      min-width: 90px;
+      max-width: 190px;
+      height: 100%;
+      border-right: 1px solid var(--border-primary);
+      border-top: 2px solid transparent;
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      flex-shrink: 0;
+      user-select: none;
+      transition: background 0.1s, color 0.1s;
+    }
+
+    .preview-tab:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .preview-tab.active {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      border-top-color: var(--accent);
+      font-weight: 500;
+    }
+
+    .preview-tab-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .preview-tab-close {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 17px;
+      height: 17px;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--text-tertiary);
+      font-size: 13px;
+      line-height: 1;
+      padding: 0;
+      cursor: pointer;
+      flex-shrink: 0;
+      opacity: 0.7;
+    }
+
+    .preview-tab:hover .preview-tab-close,
+    .preview-tab.active .preview-tab-close {
+      opacity: 1;
+    }
+
+    .preview-tab-close:hover {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
     .preview-header {
       display: flex;
       align-items: center;
@@ -524,14 +616,14 @@
       text-overflow: ellipsis;
       white-space: nowrap;
       font-family: var(--font-mono);
-      font-size: 12px;
+      font-size: 13px;
       font-weight: 600;
       color: var(--text-primary);
     }
 
     .preview-meta {
       font-family: var(--font-mono);
-      font-size: 10.5px;
+      font-size: 11px;
       color: var(--text-tertiary);
       white-space: nowrap;
       flex-shrink: 0;
@@ -562,7 +654,7 @@
       background: transparent;
       color: var(--text-secondary);
       font-family: var(--font-ui);
-      font-size: 11px;
+      font-size: 11.5px;
       font-weight: 500;
       padding: 2px 7px;
       border-radius: 4px;
@@ -586,11 +678,11 @@
       background: var(--bg-primary);
     }
 
-    /* Code viewer table */
+    /* Code viewer table (+2px font size) */
     .code-view {
       font-family: var(--font-mono);
-      font-size: 12px;
-      line-height: 1.55;
+      font-size: 14px;
+      line-height: 1.6;
       padding: 8px 0;
       min-width: 100%;
     }
@@ -609,7 +701,7 @@
       -webkit-user-select: none;
       text-align: right;
       padding: 0 10px 0 8px;
-      min-width: 42px;
+      min-width: 46px;
       color: var(--text-tertiary);
       opacity: 0.75;
       flex-shrink: 0;
@@ -634,12 +726,12 @@
     .syn-cmt { color: var(--syn-cmt); font-style: italic; }
     .syn-key { color: var(--syn-key); }
 
-    /* Markdown viewer */
+    /* Markdown viewer (+2px font size) */
     .md-view {
       padding: 14px 18px 28px 18px;
       font-family: var(--font-ui);
-      font-size: 13.5px;
-      line-height: 1.65;
+      font-size: 15.5px;
+      line-height: 1.7;
       color: var(--text-primary);
       overflow-wrap: break-word;
     }
@@ -716,8 +808,8 @@
       border: 1px solid var(--border-primary);
       overflow-x: auto;
       font-family: var(--font-mono);
-      font-size: 12px;
-      line-height: 1.5;
+      font-size: 14px;
+      line-height: 1.55;
     }
 
     .md-view pre code {
@@ -730,7 +822,7 @@
       width: 100%;
       border-collapse: collapse;
       margin: 0.85em 0;
-      font-size: 12.5px;
+      font-size: 14.5px;
     }
 
     .md-view th,
@@ -763,6 +855,42 @@
 
     .md-view a:hover {
       text-decoration: underline;
+    }
+
+    /* Unsupported / Binary file centered view (matches AGY native prompt) */
+    .unsupported-view {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-height: 240px;
+      padding: 24px;
+      gap: 14px;
+      text-align: center;
+      user-select: none;
+    }
+
+    .unsupported-text {
+      font-size: 13.5px;
+      color: var(--text-secondary);
+    }
+
+    .unsupported-btn {
+      padding: 6px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--border-primary);
+      background: transparent;
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s;
+    }
+
+    .unsupported-btn:hover {
+      background: var(--bg-secondary);
+      border-color: var(--text-tertiary);
     }
 
     /* Image viewer */
@@ -938,6 +1066,7 @@
 
     <div id="mainSplit" class="main">
       <div id="previewPane" class="preview-pane">
+        <div id="previewTabsBar" class="preview-tabs"></div>
         <div class="preview-header">
           <div class="preview-title-wrap">
             <span id="previewTitle" class="preview-title"></span>

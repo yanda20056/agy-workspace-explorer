@@ -151,6 +151,7 @@ const I18N = {
     previewEmptyTitle: 'Built-in Viewer',
     previewEmptyHint: 'Click any file in the right tree to view its content here.',
     previewLoading: 'Loading file content...',
+    binaryNotSupported: 'Binary file is not supported',
     previewBinary: (kb) => `[Binary file, size ${kb} KB, text preview not supported]`,
     previewTruncated: '\n\n... [File exceeds 200KB, output truncated]',
     previewReadError: (msg) => `Failed to read file: ${msg}`,
@@ -265,6 +266,7 @@ const I18N = {
     previewEmptyTitle: '内置查看器',
     previewEmptyHint: '在右侧目录树中点击任意文件，即可在此处查看内容（右侧目录树常驻）。',
     previewLoading: '正在加载文件内容...',
+    binaryNotSupported: '不支持直接预览此二进制文件',
     previewBinary: (kb) => `[二进制文件，大小 ${kb} KB，不支持文本预览]`,
     previewTruncated: '\n\n... [文件超过 200KB，已截断显示]',
     previewReadError: (msg) => `无法读取文件: ${msg}`,
@@ -293,6 +295,8 @@ const state = {
   expandedProjects: new Set(), // rootPath (used in 'all' mode)
   dirCache: new Map(), // makeDirKey(rootPath, relPath) -> entries[]
   loadingKeys: new Set(),
+  openTabs: [], // Array<{ key, rootPath, item, data, loading, renderMode, scrollTop }>
+  activeTabKey: null,
   previewItem: null,
   previewData: null,
   previewRenderMode: 'render', // 'render' | 'raw'
@@ -331,6 +335,7 @@ const $subbarBadge = document.getElementById('subbarBadge');
 const $mainSplit = document.getElementById('mainSplit');
 const $treeContainer = document.getElementById('treeContainer');
 const $previewPane = document.getElementById('previewPane');
+const $previewTabsBar = document.getElementById('previewTabsBar');
 const $previewResizer = document.getElementById('previewResizer');
 const $previewTitle = document.getElementById('previewTitle');
 const $previewMeta = document.getElementById('previewMeta');
@@ -857,7 +862,135 @@ function setPreviewSplitOpen(isOpen) {
   $mainSplit.classList.toggle('preview-open', Boolean(isOpen));
 }
 
+function getActiveTab() {
+  if (!state.activeTabKey) return null;
+  return state.openTabs.find((t) => t.key === state.activeTabKey) || null;
+}
+
+function saveActiveTabScroll() {
+  const curr = getActiveTab();
+  if (curr && $previewBody) {
+    curr.scrollTop = $previewBody.scrollTop;
+  }
+}
+
+function syncActiveTabToState() {
+  const tab = getActiveTab();
+  if (tab) {
+    state.previewItem = tab.item;
+    state.previewData = tab.data;
+    state.previewRenderMode = tab.renderMode || 'raw';
+  } else {
+    state.previewItem = null;
+    state.previewData = null;
+  }
+}
+
+function renderPreviewTabs() {
+  if (!$previewTabsBar) return;
+  $previewTabsBar.innerHTML = '';
+  $previewTabsBar.classList.toggle('has-tabs', state.openTabs.length > 0);
+
+  for (const tab of state.openTabs) {
+    const isActive = tab.key === state.activeTabKey;
+    const tabEl = document.createElement('div');
+    tabEl.className = 'preview-tab' + (isActive ? ' active' : '');
+    tabEl.title = tab.item.relPath || tab.item.absPath || tab.item.name;
+
+    const iconEl = createIconNode(tab.item, false);
+    iconEl.style.marginRight = '2px';
+    tabEl.appendChild(iconEl);
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'preview-tab-name';
+    nameEl.textContent = tab.item.name;
+    tabEl.appendChild(nameEl);
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'preview-tab-close';
+    closeBtn.innerHTML = '&times;';
+    closeBtn.title = t('closePreviewTitle');
+    closeBtn.onclick = (e) => {
+      e.stopPropagation();
+      closePreviewTab(tab.key);
+    };
+    tabEl.appendChild(closeBtn);
+
+    tabEl.onclick = () => {
+      if (state.activeTabKey !== tab.key) {
+        activatePreviewTab(tab.key);
+      }
+    };
+
+    // Middle-click closes tab
+    tabEl.onauxclick = (e) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        e.stopPropagation();
+        closePreviewTab(tab.key);
+      }
+    };
+
+    $previewTabsBar.appendChild(tabEl);
+  }
+
+  requestAnimationFrame(() => {
+    const activeEl = $previewTabsBar.querySelector('.preview-tab.active');
+    if (activeEl) {
+      activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  });
+}
+
+function activatePreviewTab(tabKey) {
+  saveActiveTabScroll();
+  state.activeTabKey = tabKey;
+  syncActiveTabToState();
+  if (state.previewItem) {
+    state.selectedKey = tabKey;
+  }
+  renderTree();
+  renderPreviewContent();
+  const tab = getActiveTab();
+  if (tab && $previewBody) {
+    requestAnimationFrame(() => {
+      $previewBody.scrollTop = tab.scrollTop || 0;
+    });
+  }
+}
+
+function closePreviewTab(tabKey) {
+  const idx = state.openTabs.findIndex((t) => t.key === tabKey);
+  if (idx === -1) return;
+  const wasActive = state.activeTabKey === tabKey;
+  state.openTabs.splice(idx, 1);
+
+  if (state.openTabs.length === 0) {
+    state.activeTabKey = null;
+    syncActiveTabToState();
+    setPreviewSplitOpen(false);
+    renderPreviewContent();
+    return;
+  }
+
+  if (wasActive) {
+    const nextIdx = Math.min(idx, state.openTabs.length - 1);
+    state.activeTabKey = state.openTabs[nextIdx].key;
+    syncActiveTabToState();
+    state.selectedKey = state.activeTabKey;
+    renderTree();
+  }
+  renderPreviewContent();
+  const activeTab = getActiveTab();
+  if (wasActive && activeTab && $previewBody) {
+    requestAnimationFrame(() => {
+      $previewBody.scrollTop = activeTab.scrollTop || 0;
+    });
+  }
+}
+
 function renderPreviewHeaderControls() {
+  renderPreviewTabs();
   const data = state.previewData;
   const item = state.previewItem;
   if (!item) {
@@ -899,6 +1032,7 @@ function renderPreviewHeaderControls() {
 }
 
 function renderPreviewContent() {
+  syncActiveTabToState();
   renderPreviewHeaderControls();
   $previewBody.innerHTML = '';
 
@@ -944,9 +1078,28 @@ function renderPreviewContent() {
     return;
   }
 
-  // 2. Binary non-image file
+  // 2. Binary / unsupported file (.docx, .pptx, .xlsx, .pdf, .zip, etc.) -> Figure 1 button view
   if (data.isBinary) {
-    setEmptyMessage($previewBody, t('previewBinary', (data.size / 1024).toFixed(1)));
+    const box = document.createElement('div');
+    box.className = 'unsupported-view';
+
+    const txt = document.createElement('div');
+    txt.className = 'unsupported-text';
+    txt.textContent = t('binaryNotSupported');
+
+    const btn = document.createElement('button');
+    btn.className = 'unsupported-btn';
+    btn.textContent = t('ctxRevealInOs');
+    const targetItem = state.previewItem;
+    btn.onclick = () => {
+      if (targetItem) {
+        revealInSystemExplorer(targetItem, targetItem.rootPath);
+      }
+    };
+
+    box.appendChild(txt);
+    box.appendChild(btn);
+    $previewBody.appendChild(box);
     return;
   }
 
@@ -997,7 +1150,21 @@ function renderPreviewContent() {
   $previewBody.appendChild(codeWrap);
 }
 
+let lastNativeOpenKey = null;
+let lastNativeOpenAt = 0;
+let nativeOpenInFlightKey = null;
+
 async function openFileInNativePane(item, rootPath) {
+  const fileKey = makeDirKey(rootPath, item.relPath);
+  const now = Date.now();
+  // Deduplicate repeated clicks on the same file in native mode
+  if (
+    nativeOpenInFlightKey === fileKey ||
+    (lastNativeOpenKey === fileKey && now - lastNativeOpenAt < 1500)
+  ) {
+    return;
+  }
+  nativeOpenInFlightKey = fileKey;
   try {
     const result = await app.request(
       {
@@ -1009,23 +1176,55 @@ async function openFileInNativePane(item, rootPath) {
     if (result?.isError) {
       await openFileInlinePreview(item, rootPath);
     } else {
+      lastNativeOpenKey = fileKey;
+      lastNativeOpenAt = Date.now();
       showToast(t('toastOpened', item.name));
     }
   } catch {
     await openFileInlinePreview(item, rootPath);
+  } finally {
+    if (nativeOpenInFlightKey === fileKey) {
+      nativeOpenInFlightKey = null;
+    }
   }
 }
 
-async function openFileInlinePreview(item, rootPath) {
-  const seq = ++previewSeq;
-  const ext = (item.ext || '').toLowerCase();
-  const prevExt = (state.previewItem?.ext || '').toLowerCase();
-  if (ext !== prevExt) {
-    state.previewRenderMode = isMarkdownExt(ext) || ext === 'svg' ? 'render' : 'raw';
-  }
-  state.previewItem = { ...item, rootPath };
-  state.previewData = null;
+async function openFileInlinePreview(item, rootPath, forceReload = false) {
+  const tabKey = makeDirKey(rootPath, item.relPath);
+  let tab = state.openTabs.find((t) => t.key === tabKey);
+
   setPreviewSplitOpen(true);
+
+  // If already open and loaded (or currently loading) and not forcing a reload,
+  // simply switch to the existing tab without re-fetching or re-rendering!
+  if (tab && !forceReload && (tab.loading || (tab.data && !tab.data.error))) {
+    if (state.activeTabKey !== tabKey) {
+      activatePreviewTab(tabKey);
+    }
+    return;
+  }
+
+  saveActiveTabScroll();
+  const ext = (item.ext || '').toLowerCase();
+
+  if (!tab) {
+    tab = {
+      key: tabKey,
+      rootPath,
+      item: { ...item, rootPath },
+      data: null,
+      loading: true,
+      renderMode: isMarkdownExt(ext) || ext === 'svg' ? 'render' : 'raw',
+      scrollTop: 0,
+    };
+    state.openTabs.push(tab);
+  } else {
+    tab.loading = true;
+    tab.data = null;
+  }
+
+  state.activeTabKey = tabKey;
+  syncActiveTabToState();
   renderPreviewContent();
 
   try {
@@ -1033,13 +1232,21 @@ async function openFileInlinePreview(item, rootPath) {
       rootPath,
       relPath: item.relPath,
     });
-    if (seq !== previewSeq) return;
-    state.previewData = data;
-    renderPreviewContent();
+    tab.data = data;
+    tab.loading = false;
+    if (state.activeTabKey === tabKey) {
+      renderPreviewContent();
+    } else {
+      renderPreviewTabs();
+    }
   } catch (err) {
-    if (seq !== previewSeq) return;
-    state.previewData = { error: err.message };
-    renderPreviewContent();
+    tab.data = { error: err.message };
+    tab.loading = false;
+    if (state.activeTabKey === tabKey) {
+      renderPreviewContent();
+    } else {
+      renderPreviewTabs();
+    }
   }
 }
 
@@ -1796,6 +2003,10 @@ $btnRefresh.onclick = async () => {
   }
   renderHeader();
   await reloadVisibleDirs();
+  const activeTab = getActiveTab();
+  if (activeTab) {
+    await openFileInlinePreview(activeTab.item, activeTab.rootPath, true);
+  }
   if (hasActiveSearch()) {
     await runSearch();
   }
@@ -1859,6 +2070,8 @@ renderPreviewContent();
 
 if ($btnModeRender) {
   $btnModeRender.onclick = () => {
+    const tab = getActiveTab();
+    if (tab) tab.renderMode = 'render';
     state.previewRenderMode = 'render';
     renderPreviewContent();
   };
@@ -1866,6 +2079,8 @@ if ($btnModeRender) {
 
 if ($btnModeRaw) {
   $btnModeRaw.onclick = () => {
+    const tab = getActiveTab();
+    if (tab) tab.renderMode = 'raw';
     state.previewRenderMode = 'raw';
     renderPreviewContent();
   };
@@ -1890,10 +2105,11 @@ if ($btnPreviewCopyContent) {
 }
 
 $btnPreviewClose.onclick = () => {
-  previewSeq++;
-  setPreviewSplitOpen(false);
-  state.previewItem = null;
-  state.previewData = null;
+  if (state.activeTabKey) {
+    closePreviewTab(state.activeTabKey);
+  } else {
+    setPreviewSplitOpen(false);
+  }
 };
 
 $btnPreviewCopyRel.onclick = () => {

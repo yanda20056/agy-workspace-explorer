@@ -894,6 +894,61 @@ const IMAGE_MIME_MAP = {
   bmp: 'image/bmp',
 };
 
+const KNOWN_BINARY_EXTS = new Set([
+  'doc',
+  'docx',
+  'ppt',
+  'pptx',
+  'xls',
+  'xlsx',
+  'pdf',
+  'zip',
+  'rar',
+  '7z',
+  'tar',
+  'gz',
+  'tgz',
+  'bz2',
+  'xz',
+  'exe',
+  'dll',
+  'so',
+  'dylib',
+  'bin',
+  'dat',
+  'db',
+  'sqlite',
+  'sqlite3',
+  'mp3',
+  'mp4',
+  'wav',
+  'ogg',
+  'flac',
+  'aac',
+  'avi',
+  'mov',
+  'mkv',
+  'webm',
+  'ttf',
+  'otf',
+  'woff',
+  'woff2',
+  'eot',
+  'class',
+  'jar',
+  'war',
+  'pyc',
+  'pyd',
+  'wasm',
+  'psd',
+  'ai',
+  'sketch',
+  'fig',
+  'fbx',
+  'glb',
+  'osgb',
+]);
+
 async function readFilePreview(rootPath, relPath) {
   const resolvedRoot = await assertAllowedRoot(rootPath);
   const absPath = path.resolve(resolvedRoot, relPath);
@@ -939,6 +994,21 @@ async function readFilePreview(rootPath, relPath) {
       isBinary: !isSvg,
       truncated: false,
       content: isSvg ? buf.toString('utf8') : '',
+    };
+  }
+
+  if (KNOWN_BINARY_EXTS.has(ext) || (imageMime && stat.size > MAX_IMAGE_BYTES)) {
+    return {
+      name,
+      relPath: normalizedRel,
+      absPath,
+      fileUri: localPathToUri(absPath),
+      ext,
+      size: stat.size,
+      isImage: false,
+      isBinary: true,
+      truncated: false,
+      content: '',
     };
   }
 
