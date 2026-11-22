@@ -28,9 +28,13 @@ agy plugin install https://github.com/yanda20056/agy-workspace-explorer
 - **双模式打开开关（`分栏` / `原生`，默认内置分栏查看 + 右侧常驻目录树）**：
   - 工程下拉菜单旁内置 **`Split` / `分栏` ↔ `AGY` / `原生`** 模式切换开关（自动记住偏好）：
     - **`Split` / `分栏` 模式（默认）**：采用与 AGY 原生一致的**左看文件内容 + 右侧常驻文件树**分栏布局（中间分隔条可左右拖拽调节文件树宽度）。在右侧点击任意文件时，直接在左侧实时切换查看内容，**右侧文件树全程常驻不消失**：
+      - **多标签页常驻（Multi-Tab）**：顶部支持多文件标签栏（点击切换、悬停或中键关闭、自动记忆每个标签页的滚动位置与渲染模式），重复点击同一文件自动激活已有标签页而不重复加载。
+      - **文件内搜索（`Ctrl+F` / `Cmd+F`）**：内置查看器支持快捷键 `Ctrl+F`（或顶部搜索图标）呼出页面内查找栏，支持 **`Aa` 区分大小写**、**`.*` 正则表达式**、实时命中计数高亮，以及 `Enter` / `Shift+Enter` 上下跳转。
+      - **文件树自动定位同步（Auto-Reveal，默认开启）**：顶部工具栏（模式切换与语言切换旁）内置准星定位开关，开启后凡是在内置查看器中打开或切换标签页的文件，右侧文件树会自动展开对应父目录、高亮选中并智能滚动定位（类似 Rider / VS Code）。
       - **Markdown (`.md`)**：内置 GitHub 风格 Markdown 渲染器（支持表格、标题、代码块语法高亮、引用、任务列表），顶部支持 **`预览 (Preview)` / `源码 (Raw)`** 一键切换。
       - **代码与文本文件**：带独立行号列（复制代码时不会连带复制行号）、轻量语法高亮、**`换行 (Wrap)`** 开关与 **`复制全文 (Copy)`**。
       - **图片文件 (`.png` / `.jpg` / `.svg` / `.webp` / `.gif`)**：内置透明棋盘格图片预览，自动显示图片分辨率尺寸与文件大小（`.svg` 同时支持预览与源码切换）。
+      - **二进制 / Office 文档（`.docx` / `.pptx` / `.xlsx` / `.pdf` 等）**：居中友好提示并提供 **`在系统文件窗口中打开 (Reveal in File Explorer)`** 按钮，一键打开系统资源管理器并选中该文件。
       - 顶部同时保留 **`原生打开 (AGY Tab)`** 按钮，随时一键弹出 AGY 原生标签页。
     - **`AGY` / `原生` 模式**：左键点击文件直接调用 `com.google.antigravity/toggle-aux-pane` 在 AGY 原生 `fileView` 标签页中打开。
 - **增强型搜索（模糊 / 正则 / 大小写）**：
@@ -76,9 +80,13 @@ agy plugin install https://github.com/yanda20056/agy-workspace-explorer
 - **Dual File-Open Mode Toggle (`Split` / `AGY`, Split View by default)**:
   - One-click **`Split` ↔ `AGY`** toggle button next to the project dropdown (persisted across sessions):
     - **`Split` Mode (Built-in Left Viewer + Right Docked File Tree)**: Keeps the enhanced file tree permanently docked on the right (with a draggable vertical splitter) while opening clicked files on the left:
+      - **Multi-Tab Bar**: Keep multiple files open simultaneously with tab switching, middle-click or `×` close, per-tab scroll & render-mode persistence, and automatic click deduplication.
+      - **In-File Find (`Ctrl+F` / `Cmd+F`)**: Search inside the currently opened file (Markdown preview or source code) with **`Aa` Match Case**, **`.*` Regex**, live match counter, and `Enter` / `Shift+Enter` navigation.
+      - **Auto-Reveal Active File in Tree (Enabled by Default)**: Crosshair toggle button next to the mode and language switches; automatically expands parent directories, highlights, and smart-scrolls to the active viewer file in the right-hand file tree (similar to Rider / VS Code).
       - **Markdown (`.md`)**: Built-in GFM Markdown renderer (tables, headings, fenced code blocks with syntax highlighting, blockquotes, task lists) with a **`Preview` | `Raw`** toggle.
       - **Code & Text**: Syntax-highlighted code viewer with a non-selectable line-number gutter (clean copy-paste), **`Wrap`** toggle, and one-click **`Copy`**.
       - **Images (`.png`, `.jpg`, `.svg`, `.webp`, `.gif`)**: Centered image preview on a transparency grid with pixel dimensions and file size.
+      - **Binary / Office Files (`.docx`, `.pptx`, `.xlsx`, `.pdf`, etc.)**: Displays a clean **`Binary file is not supported`** view with a **`Reveal in File Explorer`** button.
       - Includes an **`AGY Tab`** button in the viewer header to pop the file into Antigravity's native `fileView` tab anytime.
     - **`AGY` Mode (Native Tab)**: Clicking any file opens it directly in Antigravity's native side-pane `fileView` tab (`com.google.antigravity/toggle-aux-pane`).
 - **Fuzzy, Regex & Case-Sensitive Search**: Fast recursive search scoped to the current project (or across all projects) supporting fuzzy subsequence matching (`~`), case sensitivity (`Aa`), regular expressions (`.*`), match highlighting, and one-click reveal in tree.
