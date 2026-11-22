@@ -883,6 +883,17 @@ async function searchSingleProject(resolvedRoot, projectName, matcher, showHidde
   return results;
 }
 
+const IMAGE_MIME_MAP = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  ico: 'image/x-icon',
+  bmp: 'image/bmp',
+};
+
 async function readFilePreview(rootPath, relPath) {
   const resolvedRoot = await assertAllowedRoot(rootPath);
   const absPath = path.resolve(resolvedRoot, relPath);
@@ -895,10 +906,45 @@ async function readFilePreview(rootPath, relPath) {
     throw new Error('Target is a directory');
   }
 
-  const MAX_BYTES = 200 * 1024;
+  const name = path.basename(absPath);
+  const ext = path.extname(name).toLowerCase().replace(/^\./, '');
+  const normalizedRel = toPosixRel(resolvedRoot, absPath);
+  const imageMime = IMAGE_MIME_MAP[ext] || null;
+  const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+  const MAX_TEXT_BYTES = 200 * 1024;
+
+  await addRecentFile({
+    name,
+    relPath: normalizedRel,
+    absPath,
+    rootPath: resolvedRoot,
+    fileUri: localPathToUri(absPath),
+    ext,
+  });
+
+  if (imageMime && stat.size <= MAX_IMAGE_BYTES) {
+    const buf = await fs.readFile(absPath);
+    const dataUrl = `data:${imageMime};base64,${buf.toString('base64')}`;
+    const isSvg = ext === 'svg';
+    return {
+      name,
+      relPath: normalizedRel,
+      absPath,
+      fileUri: localPathToUri(absPath),
+      ext,
+      size: stat.size,
+      isImage: true,
+      mimeType: imageMime,
+      dataUrl,
+      isBinary: !isSvg,
+      truncated: false,
+      content: isSvg ? buf.toString('utf8') : '',
+    };
+  }
+
   const fd = await fs.open(absPath, 'r');
   try {
-    const len = Math.min(stat.size, MAX_BYTES);
+    const len = Math.min(stat.size, MAX_TEXT_BYTES);
     const buf = Buffer.alloc(len);
     await fd.read(buf, 0, len, 0);
 
@@ -911,26 +957,15 @@ async function readFilePreview(rootPath, relPath) {
       }
     }
 
-    const name = path.basename(absPath);
-    const ext = path.extname(name).toLowerCase().replace(/^\./, '');
-    const normalizedRel = toPosixRel(resolvedRoot, absPath);
-
-    await addRecentFile({
-      name,
-      relPath: normalizedRel,
-      absPath,
-      rootPath: resolvedRoot,
-      fileUri: localPathToUri(absPath),
-      ext,
-    });
-
     if (isBinary) {
       return {
         name,
         relPath: normalizedRel,
         absPath,
         fileUri: localPathToUri(absPath),
+        ext,
         size: stat.size,
+        isImage: false,
         isBinary: true,
         truncated: false,
         content: '',
@@ -942,9 +977,11 @@ async function readFilePreview(rootPath, relPath) {
       relPath: normalizedRel,
       absPath,
       fileUri: localPathToUri(absPath),
+      ext,
       size: stat.size,
+      isImage: false,
       isBinary: false,
-      truncated: stat.size > MAX_BYTES,
+      truncated: stat.size > MAX_TEXT_BYTES,
       content: buf.toString('utf8'),
     };
   } finally {
@@ -1158,6 +1195,7 @@ async function resolveContext(explicitRootPath, extra) {
     detectedBy,
     signalTime,
     lang: state.lang === 'zh' ? 'zh' : 'en',
+    openMode: state.openMode === 'native' ? 'native' : 'split',
     recents: Array.isArray(state.recents) ? state.recents : [],
   };
 }
@@ -1449,19 +1487,26 @@ mcp.registerTool(
 mcp.registerTool(
   'set_language',
   {
-    title: 'Set Language',
-    description: 'Remember the UI language preference (en or zh).',
+    title: 'Set Language and UI Preferences',
+    description: 'Remember the UI language (en or zh) and file open mode (split or native).',
     inputSchema: {
-      lang: z.enum(['en', 'zh']),
+      lang: z.enum(['en', 'zh']).optional(),
+      openMode: z.enum(['split', 'native']).optional(),
     },
     _meta: APP_ONLY_META,
   },
-  async ({ lang }) => {
-    const normalized = lang === 'zh' ? 'zh' : 'en';
-    await updateState((prev) => ({ ...prev, lang: normalized }));
+  async ({ lang, openMode }) => {
+    const next = await updateState((prev) => ({
+      ...prev,
+      ...(lang ? { lang: lang === 'zh' ? 'zh' : 'en' } : {}),
+      ...(openMode ? { openMode: openMode === 'native' ? 'native' : 'split' } : {}),
+    }));
     return {
-      content: [{ type: 'text', text: normalized }],
-      structuredContent: { lang: normalized },
+      content: [{ type: 'text', text: `${next?.lang || 'en'}:${next?.openMode || 'split'}` }],
+      structuredContent: {
+        lang: next?.lang || 'en',
+        openMode: next?.openMode || 'split',
+      },
     };
   },
 );

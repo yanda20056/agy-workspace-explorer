@@ -20,6 +20,11 @@
       --menu-shadow: 0 10px 30px rgba(0, 0, 0, 0.42);
       --font-ui: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
       --font-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace);
+      --syn-kw: #c084fc;
+      --syn-str: #4ade80;
+      --syn-num: #fb923c;
+      --syn-cmt: #71717a;
+      --syn-key: #60a5fa;
     }
 
     [data-theme="light"] {
@@ -34,6 +39,11 @@
       --accent: var(--color-ring-primary, #2563eb);
       --accent-soft: rgba(37, 99, 235, 0.12);
       --menu-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+      --syn-kw: #7e22ce;
+      --syn-str: #15803d;
+      --syn-num: #c2410c;
+      --syn-cmt: #71717a;
+      --syn-key: #1d4ed8;
     }
 
     * {
@@ -76,7 +86,7 @@
     .header-row {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
     }
 
     .project-select {
@@ -126,14 +136,16 @@
       border-color: rgba(59, 130, 246, 0.35);
     }
 
-    .lang-btn {
+    .lang-btn,
+    .mode-btn {
       width: auto;
       min-width: 28px;
-      padding: 0 5px;
+      padding: 0 6px;
       font-family: var(--font-mono);
       font-size: 11px;
       font-weight: 700;
       letter-spacing: -0.02em;
+      gap: 3px;
     }
 
     .search-wrap {
@@ -278,21 +290,30 @@
       flex-shrink: 0;
     }
 
-    /* Main split area */
+    /* Main horizontal split area: Left File Viewer + Right Docked File Tree */
     .main {
       flex: 1;
       min-height: 0;
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       overflow: hidden;
+      position: relative;
     }
 
     .tree-scroll {
       flex: 1;
+      min-width: 165px;
       min-height: 0;
       overflow-y: auto;
       overflow-x: hidden;
       padding: 4px 0 12px 0;
+      background: var(--bg-primary);
+    }
+
+    .main.preview-open .tree-scroll {
+      flex: none;
+      width: var(--tree-width, 260px);
+      max-width: 72%;
     }
 
     .tree-scroll::-webkit-scrollbar,
@@ -415,18 +436,25 @@
       justify-content: center;
       height: 21px;
       min-width: 21px;
-      padding: 0 4px;
-      border: none;
+      padding: 0 5px;
+      border: 1px solid transparent;
       border-radius: 4px;
       background: transparent;
       color: var(--text-secondary);
       cursor: pointer;
       font-size: 11px;
+      white-space: nowrap;
     }
 
     .mini-btn:hover {
       background: var(--bg-tertiary);
       color: var(--text-primary);
+    }
+
+    .mini-btn.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: rgba(59, 130, 246, 0.35);
     }
 
     /* Empty / loading */
@@ -437,66 +465,342 @@
       font-size: 12.5px;
     }
 
-    /* Inline Preview Drawer */
+    /* Left Built-in File Viewer Pane */
     .preview-pane {
       display: none;
       flex-direction: column;
-      height: 46%;
-      min-height: 140px;
-      max-height: 80%;
-      border-top: 1px solid var(--border-primary);
+      flex: 1;
+      min-width: 180px;
+      min-height: 0;
       background: var(--bg-primary);
-      flex-shrink: 0;
+      overflow: hidden;
     }
 
-    .preview-pane.open {
+    .main.preview-open .preview-pane {
       display: flex;
     }
 
     .preview-resizer {
-      height: 4px;
-      cursor: ns-resize;
+      display: none;
+      width: 5px;
+      cursor: ew-resize;
       background: transparent;
+      border-left: 1px solid var(--border-primary);
       flex-shrink: 0;
+      transition: background 0.12s;
     }
 
-    .preview-resizer:hover {
+    .main.preview-open .preview-resizer {
+      display: block;
+    }
+
+    .preview-resizer:hover,
+    .preview-resizer.dragging {
       background: var(--accent-soft);
     }
 
     .preview-header {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 4px 10px 6px 10px;
+      gap: 4px;
+      padding: 5px 8px;
       background: var(--bg-secondary);
       border-bottom: 1px solid var(--border-primary);
       flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .preview-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+      min-width: 90px;
+      overflow: hidden;
     }
 
     .preview-title {
-      flex: 1;
-      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
       font-family: var(--font-mono);
       font-size: 12px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .preview-meta {
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .preview-toolbar {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      flex-shrink: 0;
+    }
+
+    .preview-mode-tabs {
+      display: none;
+      align-items: center;
+      background: var(--bg-tertiary);
+      border-radius: 5px;
+      padding: 1px;
+      margin-right: 2px;
+    }
+
+    .preview-mode-tabs.visible {
+      display: inline-flex;
+    }
+
+    .mode-tab {
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-family: var(--font-ui);
+      font-size: 11px;
       font-weight: 500;
+      padding: 2px 7px;
+      border-radius: 4px;
+      cursor: pointer;
+      line-height: 1.3;
+    }
+
+    .mode-tab.active {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
     }
 
     .preview-body {
       flex: 1;
       min-height: 0;
       overflow: auto;
-      padding: 8px 10px;
       margin: 0;
+      user-select: text;
+      color: var(--text-primary);
+      background: var(--bg-primary);
+    }
+
+    /* Code viewer table */
+    .code-view {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.55;
+      padding: 8px 0;
+      min-width: 100%;
+    }
+
+    .code-line {
+      display: flex;
+      padding: 0 10px 0 0;
+    }
+
+    .code-line:hover {
+      background: var(--bg-secondary);
+    }
+
+    .code-ln {
+      user-select: none;
+      -webkit-user-select: none;
+      text-align: right;
+      padding: 0 10px 0 8px;
+      min-width: 42px;
+      color: var(--text-tertiary);
+      opacity: 0.75;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border-secondary);
+      margin-right: 10px;
+    }
+
+    .code-lc {
+      white-space: pre;
+      flex: 1;
+      tab-size: 2;
+    }
+
+    .code-view.wrap .code-lc {
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .syn-kw { color: var(--syn-kw); font-weight: 600; }
+    .syn-str { color: var(--syn-str); }
+    .syn-num { color: var(--syn-num); }
+    .syn-cmt { color: var(--syn-cmt); font-style: italic; }
+    .syn-key { color: var(--syn-key); }
+
+    /* Markdown viewer */
+    .md-view {
+      padding: 14px 18px 28px 18px;
+      font-family: var(--font-ui);
+      font-size: 13.5px;
+      line-height: 1.65;
+      color: var(--text-primary);
+      overflow-wrap: break-word;
+    }
+
+    .md-view h1,
+    .md-view h2,
+    .md-view h3,
+    .md-view h4,
+    .md-view h5,
+    .md-view h6 {
+      margin: 1.1em 0 0.5em 0;
+      font-weight: 600;
+      line-height: 1.3;
+      color: var(--text-primary);
+    }
+
+    .md-view h1:first-child,
+    .md-view h2:first-child,
+    .md-view h3:first-child {
+      margin-top: 0;
+    }
+
+    .md-view h1 {
+      font-size: 1.45em;
+      padding-bottom: 0.3em;
+      border-bottom: 1px solid var(--border-primary);
+    }
+
+    .md-view h2 {
+      font-size: 1.25em;
+      padding-bottom: 0.25em;
+      border-bottom: 1px solid var(--border-secondary);
+    }
+
+    .md-view h3 { font-size: 1.1em; }
+    .md-view h4 { font-size: 1em; }
+
+    .md-view p {
+      margin: 0.6em 0;
+    }
+
+    .md-view ul,
+    .md-view ol {
+      margin: 0.5em 0;
+      padding-left: 1.5em;
+    }
+
+    .md-view li {
+      margin: 0.25em 0;
+    }
+
+    .md-view blockquote {
+      margin: 0.7em 0;
+      padding: 4px 12px;
+      border-left: 3px solid var(--accent);
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      border-radius: 0 4px 4px 0;
+    }
+
+    .md-view code {
+      font-family: var(--font-mono);
+      font-size: 0.88em;
+      padding: 1.5px 5px;
+      border-radius: 4px;
+      background: var(--bg-tertiary);
+    }
+
+    .md-view pre {
+      margin: 0.75em 0;
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-primary);
+      overflow-x: auto;
       font-family: var(--font-mono);
       font-size: 12px;
       line-height: 1.5;
-      white-space: pre;
-      user-select: text;
-      color: var(--text-primary);
+    }
+
+    .md-view pre code {
+      padding: 0;
+      background: transparent;
+      font-size: inherit;
+    }
+
+    .md-view table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.85em 0;
+      font-size: 12.5px;
+    }
+
+    .md-view th,
+    .md-view td {
+      border: 1px solid var(--border-primary);
+      padding: 6px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .md-view th {
+      background: var(--bg-secondary);
+      font-weight: 600;
+    }
+
+    .md-view tr:nth-child(even) td {
+      background: rgba(128, 128, 128, 0.04);
+    }
+
+    .md-view hr {
+      border: none;
+      border-top: 1px solid var(--border-primary);
+      margin: 1.2em 0;
+    }
+
+    .md-view a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .md-view a:hover {
+      text-decoration: underline;
+    }
+
+    /* Image viewer */
+    .img-view {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      min-height: 100%;
+      gap: 10px;
+    }
+
+    .img-frame {
+      max-width: 100%;
+      border: 1px solid var(--border-primary);
+      border-radius: 6px;
+      padding: 8px;
+      background-image:
+        linear-gradient(45deg, rgba(128, 128, 128, 0.12) 25%, transparent 25%),
+        linear-gradient(-45deg, rgba(128, 128, 128, 0.12) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, 0.12) 75%),
+        linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.12) 75%);
+      background-size: 16px 16px;
+      background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    }
+
+    .img-frame img {
+      display: block;
+      max-width: 100%;
+      max-height: 72vh;
+      object-fit: contain;
+    }
+
+    .img-caption {
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      color: var(--text-tertiary);
     }
 
     /* Context Menu */
@@ -578,6 +882,7 @@
     <div class="header">
       <div class="header-row">
         <select id="projectSelect" class="project-select" title="Switch Project"></select>
+        <button id="btnOpenMode" class="icon-btn mode-btn active" title="Switch file open mode (Split Viewer / AGY Native Tab)">Split</button>
         <button id="btnLang" class="icon-btn lang-btn" title="Switch language (English / 中文)">EN</button>
         <button id="btnAllMode" class="icon-btn" title="Toggle: All Projects / Single Project View">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -631,21 +936,33 @@
       </div>
     </div>
 
-    <div class="main">
-      <div id="treeContainer" class="tree-scroll">
-        <div class="empty-state">Connecting to Workspace Explorer...</div>
+    <div id="mainSplit" class="main">
+      <div id="previewPane" class="preview-pane">
+        <div class="preview-header">
+          <div class="preview-title-wrap">
+            <span id="previewTitle" class="preview-title"></span>
+            <span id="previewMeta" class="preview-meta"></span>
+          </div>
+          <div class="preview-toolbar">
+            <div id="previewModeTabs" class="preview-mode-tabs">
+              <button id="btnModeRender" class="mode-tab active">Preview</button>
+              <button id="btnModeRaw" class="mode-tab">Raw</button>
+            </div>
+            <button id="btnPreviewWrap" class="mini-btn" title="Toggle Word Wrap">Wrap</button>
+            <button id="btnPreviewCopyContent" class="mini-btn" title="Copy Content">Copy</button>
+            <button id="btnPreviewCopyRel" class="mini-btn" title="Copy Relative Path">Rel</button>
+            <button id="btnPreviewCopyAbs" class="mini-btn" title="Copy Full Path">Abs</button>
+            <button id="btnPreviewOpenNative" class="mini-btn" title="Open in AGY Native Tab">AGY Tab</button>
+            <button id="btnPreviewClose" class="icon-btn" style="width:22px;height:22px" title="Close Viewer">&times;</button>
+          </div>
+        </div>
+        <div id="previewBody" class="preview-body"></div>
       </div>
 
-      <div id="previewPane" class="preview-pane">
-        <div id="previewResizer" class="preview-resizer" title="Drag to resize preview pane"></div>
-        <div class="preview-header">
-          <span id="previewTitle" class="preview-title"></span>
-          <button id="btnPreviewCopyRel" class="mini-btn" title="Copy Relative Path">Rel Path</button>
-          <button id="btnPreviewCopyAbs" class="mini-btn" title="Copy Full Path">Full Path</button>
-          <button id="btnPreviewOpenNative" class="mini-btn" title="Open in Native Tab">Open Tab</button>
-          <button id="btnPreviewClose" class="icon-btn" style="width:22px;height:22px" title="Close Preview">&times;</button>
-        </div>
-        <pre id="previewBody" class="preview-body"></pre>
+      <div id="previewResizer" class="preview-resizer" title="Drag to resize right file tree width"></div>
+
+      <div id="treeContainer" class="tree-scroll">
+        <div class="empty-state">Connecting to Workspace Explorer...</div>
       </div>
     </div>
   </div>

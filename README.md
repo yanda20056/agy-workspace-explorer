@@ -25,8 +25,14 @@ agy plugin install https://github.com/yanda20056/agy-workspace-explorer
   - 面板常驻打开时，在主界面切换工程或切换到其他工程对话框发消息，目录树会自动跟随切换；同时支持顶部一键切换查看**全部已注册工程**。
 - **右侧辅助面板 & 左侧全屏双入口**：
   - 在对话界面右侧辅助面板点击 **`+` -> `Workspace Explorer`** 作为常驻侧边栏标签页打开；也可从左侧边栏全屏打开。
-- **点击打开原生文件标签页 & 内置代码预览**：
-  - 点击任意文件优先调用 Antigravity 原生侧边栏文件查看器（`com.google.antigravity/toggle-aux-pane`）打开；在无侧边栏的全屏模式（或点击行内预览图标）下，自动开启可拖拽高度、带行号的内置文本预览面板。
+- **双模式打开开关（`分栏` / `原生`，默认内置分栏查看 + 右侧常驻目录树）**：
+  - 工程下拉菜单旁内置 **`Split` / `分栏` ↔ `AGY` / `原生`** 模式切换开关（自动记住偏好）：
+    - **`Split` / `分栏` 模式（默认）**：采用与 AGY 原生一致的**左看文件内容 + 右侧常驻文件树**分栏布局（中间分隔条可左右拖拽调节文件树宽度）。在右侧点击任意文件时，直接在左侧实时切换查看内容，**右侧文件树全程常驻不消失**：
+      - **Markdown (`.md`)**：内置 GitHub 风格 Markdown 渲染器（支持表格、标题、代码块语法高亮、引用、任务列表），顶部支持 **`预览 (Preview)` / `源码 (Raw)`** 一键切换。
+      - **代码与文本文件**：带独立行号列（复制代码时不会连带复制行号）、轻量语法高亮、**`换行 (Wrap)`** 开关与 **`复制全文 (Copy)`**。
+      - **图片文件 (`.png` / `.jpg` / `.svg` / `.webp` / `.gif`)**：内置透明棋盘格图片预览，自动显示图片分辨率尺寸与文件大小（`.svg` 同时支持预览与源码切换）。
+      - 顶部同时保留 **`原生打开 (AGY Tab)`** 按钮，随时一键弹出 AGY 原生标签页。
+    - **`AGY` / `原生` 模式**：左键点击文件直接调用 `com.google.antigravity/toggle-aux-pane` 在 AGY 原生 `fileView` 标签页中打开。
 - **增强型搜索（模糊 / 正则 / 大小写）**：
   - 默认限定在当前工程内极速递归搜索（切换至“全部工程”视图时可跨所有工程搜索），自动跳过 `node_modules`、`.git`、`library`、`temp` 等缓存目录。
   - 搜索框内置三个模式开关：
@@ -67,7 +73,14 @@ agy plugin install https://github.com/yanda20056/agy-workspace-explorer
 
 - **Auto-Follow Active Conversation & Selected Project**: Automatically detects and focuses the project of your active conversation (via lifecycle hooks) or most recently selected Antigravity project (`~/.gemini/config/projects/`), with a one-click toggle to browse all registered projects.
 - **Side Pane & Full-Page Entrypoints**: Open directly from the auxiliary side pane (`+` -> **Workspace Explorer**) or from the left sidebar (**Workspace Explorer**).
-- **Native File Opening & Built-in Preview**: Click any file to open it in Antigravity's native side-pane file viewer (`com.google.antigravity/toggle-aux-pane`), with automatic fallback to a resizable line-numbered preview drawer.
+- **Dual File-Open Mode Toggle (`Split` / `AGY`, Split View by default)**:
+  - One-click **`Split` ↔ `AGY`** toggle button next to the project dropdown (persisted across sessions):
+    - **`Split` Mode (Built-in Left Viewer + Right Docked File Tree)**: Keeps the enhanced file tree permanently docked on the right (with a draggable vertical splitter) while opening clicked files on the left:
+      - **Markdown (`.md`)**: Built-in GFM Markdown renderer (tables, headings, fenced code blocks with syntax highlighting, blockquotes, task lists) with a **`Preview` | `Raw`** toggle.
+      - **Code & Text**: Syntax-highlighted code viewer with a non-selectable line-number gutter (clean copy-paste), **`Wrap`** toggle, and one-click **`Copy`**.
+      - **Images (`.png`, `.jpg`, `.svg`, `.webp`, `.gif`)**: Centered image preview on a transparency grid with pixel dimensions and file size.
+      - Includes an **`AGY Tab`** button in the viewer header to pop the file into Antigravity's native `fileView` tab anytime.
+    - **`AGY` Mode (Native Tab)**: Clicking any file opens it directly in Antigravity's native side-pane `fileView` tab (`com.google.antigravity/toggle-aux-pane`).
 - **Fuzzy, Regex & Case-Sensitive Search**: Fast recursive search scoped to the current project (or across all projects) supporting fuzzy subsequence matching (`~`), case sensitivity (`Aa`), regular expressions (`.*`), match highlighting, and one-click reveal in tree.
 - **Quick Path Actions & OS Reveal**: Reveal any file or folder directly in your system file manager (Windows Explorer / macOS Finder), copy relative path, copy full path, copy file name, or attach selected paths directly to your conversation context.
 - **Bilingual UI (`EN` / `中`, English by default)**: One-click language toggle button next to the project dropdown to switch between English and Chinese at any time, with persistent preference.

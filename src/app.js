@@ -32,11 +32,27 @@ function detectInitialLang() {
   return 'en';
 }
 
+function detectInitialOpenMode() {
+  try {
+    const saved = window.localStorage?.getItem('workspace_explorer_open_mode');
+    if (saved === 'split' || saved === 'native') return saved;
+  } catch {
+    // ignore storage restriction
+  }
+  return 'split';
+}
+
 const I18N = {
   en: {
     switchProjectTitle: 'Switch Project',
     switchLangTitle: 'Switch language (Current: English → Click for 中文)',
     langBtnText: 'EN',
+    openModeSplitText: 'Split',
+    openModeNativeText: 'AGY',
+    openModeSplitTitle:
+      'File click mode: Built-in Left Viewer + Right Docked Tree (Click to switch to AGY Native Tab)',
+    openModeNativeTitle:
+      'File click mode: AGY Native Tab (Click to switch to Built-in Left Viewer + Right Docked Tree)',
     allModeTitle: 'Toggle: All Projects / Current Project View',
     collapseAllTitle: 'Collapse All',
     toggleHiddenTitle: 'Show/Hide Dotfiles (starting with .)',
@@ -45,14 +61,20 @@ const I18N = {
     fuzzyTitle: 'Fuzzy Match — exact substring match when off',
     caseTitle: 'Match Case',
     regexTitle: 'Use Regular Expression',
-    resizerTitle: 'Drag to resize preview pane',
-    copyRelBtn: 'Rel Path',
+    resizerTitle: 'Drag left/right to resize right file tree width',
+    modeRenderBtn: 'Preview',
+    modeRawBtn: 'Raw',
+    wrapBtn: 'Wrap',
+    wrapTitle: 'Toggle Word Wrap',
+    copyContentBtn: 'Copy',
+    copyContentTitle: 'Copy File Content',
+    copyRelBtn: 'Rel',
     copyRelTitle: 'Copy Relative Path',
-    copyAbsBtn: 'Full Path',
+    copyAbsBtn: 'Abs',
     copyAbsTitle: 'Copy Full Path',
-    openNativeBtn: 'Open Tab',
-    openNativeTitle: 'Open in Native Tab',
-    closePreviewTitle: 'Close Preview',
+    openNativeBtn: 'AGY Tab',
+    openNativeTitle: 'Open in AGY Native Tab',
+    closePreviewTitle: 'Close Viewer',
     allProjectsOption: (n) => `All Projects (${n})`,
     allProjectsSubbar: (n) => `${n} projects (click to expand, or click "Focus" to view single project)`,
     allProjectsBadge: 'All Projects',
@@ -82,15 +104,15 @@ const I18N = {
     placeholderExactCase: 'Exact substring search (case-sensitive)...',
     placeholderExact: 'Exact substring search file name or path...',
     rowRevealTitle: 'Reveal in Tree',
-    rowPreviewTitle: 'Inline Preview',
+    rowPreviewTitle: 'Built-in Split Viewer',
     rowFocusBtn: 'Focus',
     rowFocusTitle: 'Focus this project',
     rowCopyProjPathTitle: 'Copy Project Full Path',
     ctxCollapseProject: 'Collapse Project',
     ctxExpandProject: 'Expand Project',
     ctxFocusProject: 'Focus Project (Single Project View)',
-    ctxOpenNative: 'Open File (Native Tab)',
-    ctxInlinePreview: 'Inline Preview File',
+    ctxOpenNative: 'Open File (AGY Native Tab)',
+    ctxInlinePreview: 'Open in Built-in Split Viewer',
     ctxRevealFile: 'Reveal in Tree',
     ctxRevealDir: 'Expand & Reveal in Tree',
     ctxCollapseDir: 'Collapse Folder',
@@ -105,10 +127,12 @@ const I18N = {
     labelAbsPath: 'full path',
     labelName: 'name',
     labelProjPath: 'project path',
+    labelFileContent: 'file content',
     toastCopied: (label, text) => `Copied ${label}: ${text}`,
+    toastCopiedContent: (name) => `Copied content of ${name}`,
     toastCopyFailed: (text) => `Copy failed, please copy manually: ${text}`,
     toastReadDirFailed: (msg) => `Failed to read directory: ${msg}`,
-    toastOpened: (name) => `Opened: ${name}`,
+    toastOpened: (name) => `Opened in AGY tab: ${name}`,
     toastRevealedInOs: (name) => `Opened in system file manager: ${name}`,
     toastRevealInOsFailed: (msg) => `Failed to open system file manager: ${msg}`,
     toastAttached: (p) => `Attached to chat context: ${p}`,
@@ -122,6 +146,10 @@ const I18N = {
     toastRegexOn: 'Regular expression search enabled (.*)',
     toastRegexOff: 'Regular expression search disabled',
     toastLangSwitched: 'Language: English',
+    toastModeSplit: 'Mode: Built-in Split Viewer (Right Tree docked)',
+    toastModeNative: 'Mode: Open files in AGY Native Tab',
+    previewEmptyTitle: 'Built-in Viewer',
+    previewEmptyHint: 'Click any file in the right tree to view its content here.',
     previewLoading: 'Loading file content...',
     previewBinary: (kb) => `[Binary file, size ${kb} KB, text preview not supported]`,
     previewTruncated: '\n\n... [File exceeds 200KB, output truncated]',
@@ -133,6 +161,12 @@ const I18N = {
     switchProjectTitle: '切换工程',
     switchLangTitle: '切换语言 (当前: 中文 → 点击切换为 English)',
     langBtnText: '中',
+    openModeSplitText: '分栏',
+    openModeNativeText: '原生',
+    openModeSplitTitle:
+      '点击文件模式: 内置左侧查看器 + 右侧常驻目录树 (点击切换为 AGY 原生标签页)',
+    openModeNativeTitle:
+      '点击文件模式: AGY 原生标签页 (点击切换为内置左侧查看器 + 右侧常驻目录树)',
     allModeTitle: '切换：全部工程视图 / 当前工程视图',
     collapseAllTitle: '全部折叠',
     toggleHiddenTitle: '显示/隐藏以 . 开头的隐藏文件',
@@ -141,14 +175,20 @@ const I18N = {
     fuzzyTitle: '模糊查找 (Fuzzy Match) — 关闭时为精确子串匹配',
     caseTitle: '区分大小写 (Match Case)',
     regexTitle: '使用正则表达式 (Use Regular Expression)',
-    resizerTitle: '拖动调整预览区高度',
+    resizerTitle: '左右拖动调整右侧文件树宽度',
+    modeRenderBtn: '预览',
+    modeRawBtn: '源码',
+    wrapBtn: '换行',
+    wrapTitle: '切换自动换行',
+    copyContentBtn: '复制全文',
+    copyContentTitle: '复制文件全文内容',
     copyRelBtn: '相对路径',
     copyRelTitle: '复制相对路径',
     copyAbsBtn: '绝对路径',
     copyAbsTitle: '复制绝对路径',
-    openNativeBtn: '标签页打开',
-    openNativeTitle: '在原生标签页打开',
-    closePreviewTitle: '关闭预览',
+    openNativeBtn: '原生打开',
+    openNativeTitle: '在 AGY 原生标签页中打开',
+    closePreviewTitle: '关闭查看器',
     allProjectsOption: (n) => `全部工程 (${n})`,
     allProjectsSubbar: (n) => `共 ${n} 个工程（点击展开，或点右侧“聚焦”单看某工程）`,
     allProjectsBadge: '全部工程',
@@ -178,15 +218,15 @@ const I18N = {
     placeholderExactCase: '精确子串搜索 (区分大小写)...',
     placeholderExact: '精确子串搜索文件名或路径...',
     rowRevealTitle: '在目录树中定位',
-    rowPreviewTitle: '内置预览',
+    rowPreviewTitle: '内置分栏查看',
     rowFocusBtn: '聚焦',
     rowFocusTitle: '聚焦此工程',
     rowCopyProjPathTitle: '复制工程绝对路径',
     ctxCollapseProject: '折叠工程目录',
     ctxExpandProject: '展开工程目录',
     ctxFocusProject: '聚焦此工程 (单工程视图)',
-    ctxOpenNative: '打开文件 (原生标签页)',
-    ctxInlinePreview: '内置预览文件内容',
+    ctxOpenNative: '打开文件 (AGY 原生标签页)',
+    ctxInlinePreview: '在内置分栏查看器中打开',
     ctxRevealFile: '在目录树中定位',
     ctxRevealDir: '在目录树中展开定位',
     ctxCollapseDir: '折叠文件夹',
@@ -201,10 +241,12 @@ const I18N = {
     labelAbsPath: '绝对路径',
     labelName: '名称',
     labelProjPath: '工程路径',
+    labelFileContent: '文件内容',
     toastCopied: (label, text) => `已复制${label}: ${text}`,
+    toastCopiedContent: (name) => `已复制文件全文: ${name}`,
     toastCopyFailed: (text) => `复制失败，请手动复制: ${text}`,
     toastReadDirFailed: (msg) => `读取目录失败: ${msg}`,
-    toastOpened: (name) => `已打开: ${name}`,
+    toastOpened: (name) => `已在 AGY 原生标签页打开: ${name}`,
     toastRevealedInOs: (name) => `已在系统文件窗口中打开: ${name}`,
     toastRevealInOsFailed: (msg) => `打开系统文件窗口失败: ${msg}`,
     toastAttached: (p) => `已附到对话上下文: ${p}`,
@@ -218,6 +260,10 @@ const I18N = {
     toastRegexOn: '已开启正则表达式查找 (.*)',
     toastRegexOff: '已关闭正则表达式查找',
     toastLangSwitched: '语言已切换为: 中文',
+    toastModeSplit: '已切换为: 内置左侧查看器 + 右侧常驻目录树',
+    toastModeNative: '已切换为: 点击直接打开 AGY 原生标签页',
+    previewEmptyTitle: '内置查看器',
+    previewEmptyHint: '在右侧目录树中点击任意文件，即可在此处查看内容（右侧目录树常驻）。',
     previewLoading: '正在加载文件内容...',
     previewBinary: (kb) => `[二进制文件，大小 ${kb} KB，不支持文本预览]`,
     previewTruncated: '\n\n... [文件超过 200KB，已截断显示]',
@@ -229,6 +275,7 @@ const I18N = {
 
 const state = {
   lang: detectInitialLang(), // 'en' (default) | 'zh'
+  openMode: detectInitialOpenMode(), // 'split' (default: built-in left viewer + right tree) | 'native'
   projects: [],
   activeProject: null,
   viewMode: 'all', // 'single' | 'all'
@@ -247,6 +294,9 @@ const state = {
   dirCache: new Map(), // makeDirKey(rootPath, relPath) -> entries[]
   loadingKeys: new Set(),
   previewItem: null,
+  previewData: null,
+  previewRenderMode: 'render', // 'render' | 'raw'
+  previewWrap: false,
   capabilities: {},
   initialized: false,
   lastAutoSignalTime: 0,
@@ -265,6 +315,7 @@ let previewSeq = 0;
 
 // DOM elements
 const $projectSelect = document.getElementById('projectSelect');
+const $btnOpenMode = document.getElementById('btnOpenMode');
 const $btnLang = document.getElementById('btnLang');
 const $btnAllMode = document.getElementById('btnAllMode');
 const $btnCollapseAll = document.getElementById('btnCollapseAll');
@@ -277,10 +328,17 @@ const $btnCase = document.getElementById('btnCase');
 const $btnRegex = document.getElementById('btnRegex');
 const $subbarPath = document.getElementById('subbarPath');
 const $subbarBadge = document.getElementById('subbarBadge');
+const $mainSplit = document.getElementById('mainSplit');
 const $treeContainer = document.getElementById('treeContainer');
 const $previewPane = document.getElementById('previewPane');
 const $previewResizer = document.getElementById('previewResizer');
 const $previewTitle = document.getElementById('previewTitle');
+const $previewMeta = document.getElementById('previewMeta');
+const $previewModeTabs = document.getElementById('previewModeTabs');
+const $btnModeRender = document.getElementById('btnModeRender');
+const $btnModeRaw = document.getElementById('btnModeRaw');
+const $btnPreviewWrap = document.getElementById('btnPreviewWrap');
+const $btnPreviewCopyContent = document.getElementById('btnPreviewCopyContent');
 const $previewBody = document.getElementById('previewBody');
 const $btnPreviewCopyRel = document.getElementById('btnPreviewCopyRel');
 const $btnPreviewCopyAbs = document.getElementById('btnPreviewCopyAbs');
@@ -292,6 +350,12 @@ const $toast = document.getElementById('toast');
 function renderStaticTexts() {
   document.documentElement.lang = state.lang === 'zh' ? 'zh-CN' : 'en';
   $projectSelect.title = t('switchProjectTitle');
+  if ($btnOpenMode) {
+    const isSplit = state.openMode === 'split';
+    $btnOpenMode.textContent = isSplit ? t('openModeSplitText') : t('openModeNativeText');
+    $btnOpenMode.title = isSplit ? t('openModeSplitTitle') : t('openModeNativeTitle');
+    $btnOpenMode.classList.toggle('active', isSplit);
+  }
   if ($btnLang) {
     $btnLang.textContent = t('langBtnText');
     $btnLang.title = t('switchLangTitle');
@@ -305,6 +369,17 @@ function renderStaticTexts() {
   $btnCase.title = t('caseTitle');
   $btnRegex.title = t('regexTitle');
   $previewResizer.title = t('resizerTitle');
+  if ($btnModeRender) $btnModeRender.textContent = t('modeRenderBtn');
+  if ($btnModeRaw) $btnModeRaw.textContent = t('modeRawBtn');
+  if ($btnPreviewWrap) {
+    $btnPreviewWrap.textContent = t('wrapBtn');
+    $btnPreviewWrap.title = t('wrapTitle');
+    $btnPreviewWrap.classList.toggle('active', state.previewWrap);
+  }
+  if ($btnPreviewCopyContent) {
+    $btnPreviewCopyContent.textContent = t('copyContentBtn');
+    $btnPreviewCopyContent.title = t('copyContentTitle');
+  }
   $btnPreviewCopyRel.textContent = t('copyRelBtn');
   $btnPreviewCopyRel.title = t('copyRelTitle');
   $btnPreviewCopyAbs.textContent = t('copyAbsBtn');
@@ -557,6 +632,371 @@ async function revealInTree(rootPath, relPath, isDir) {
   });
 }
 
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatFileSize(bytes) {
+  const b = Number(bytes) || 0;
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function isMarkdownExt(ext) {
+  const e = (ext || '').toLowerCase();
+  return e === 'md' || e === 'markdown' || e === 'mdx';
+}
+
+const CODE_KEYWORDS = new Set([
+  'import', 'export', 'from', 'const', 'let', 'var', 'function', 'return', 'if', 'else',
+  'for', 'while', 'do', 'switch', 'case', 'break', 'continue', 'try', 'catch', 'finally',
+  'throw', 'new', 'class', 'extends', 'super', 'this', 'async', 'await', 'typeof', 'instanceof',
+  'in', 'of', 'true', 'false', 'null', 'undefined', 'void', 'delete', 'default', 'interface',
+  'type', 'enum', 'implements', 'public', 'private', 'protected', 'readonly', 'static',
+  'def', 'elif', 'except', 'lambda', 'with', 'as', 'pass', 'yield', 'None', 'True', 'False',
+  'struct', 'fn', 'pub', 'mut', 'impl', 'use', 'mod', 'match', 'package', 'func', 'defer',
+]);
+
+const CODE_TOKEN_RE =
+  /(\/\/.*$|#.*$|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`)|(\b\d+(?:\.\d+)?\b)|(\b[A-Za-z_][A-Za-z0-9_]*\b)/g;
+
+function highlightCodeLine(rawLine, ext) {
+  if (!rawLine || rawLine.length > 600) return escapeHtml(rawLine);
+  const e = (ext || '').toLowerCase();
+  if (e === 'txt' || e === 'log' || e === 'csv') return escapeHtml(rawLine);
+
+  let out = '';
+  let last = 0;
+  CODE_TOKEN_RE.lastIndex = 0;
+  let m;
+  while ((m = CODE_TOKEN_RE.exec(rawLine)) !== null) {
+    if (m.index > last) {
+      out += escapeHtml(rawLine.slice(last, m.index));
+    }
+    const [full, cmt, str, num, word] = m;
+    if (cmt) {
+      out += `<span class="syn-cmt">${escapeHtml(full)}</span>`;
+    } else if (str) {
+      const after = rawLine.slice(m.index + full.length);
+      if (e === 'json' && /^\s*:/.test(after)) {
+        out += `<span class="syn-key">${escapeHtml(full)}</span>`;
+      } else {
+        out += `<span class="syn-str">${escapeHtml(full)}</span>`;
+      }
+    } else if (num) {
+      out += `<span class="syn-num">${escapeHtml(full)}</span>`;
+    } else if (word && CODE_KEYWORDS.has(word)) {
+      out += `<span class="syn-kw">${escapeHtml(full)}</span>`;
+    } else {
+      out += escapeHtml(full);
+    }
+    last = m.index + full.length;
+  }
+  if (last < rawLine.length) {
+    out += escapeHtml(rawLine.slice(last));
+  }
+  return out;
+}
+
+function formatInlineMarkdown(raw) {
+  const codeSpans = [];
+  let text = escapeHtml(raw).replace(/`([^`]+)`/g, (_m, c) => {
+    const idx = codeSpans.length;
+    codeSpans.push(`<code>${c}</code>`);
+    return `\0CODE${idx}\0`;
+  });
+
+  text = text
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+    .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+  return text.replace(/\0CODE(\d+)\0/g, (_m, idx) => codeSpans[Number(idx)] || '');
+}
+
+function renderMarkdownToHtml(md) {
+  const lines = String(md || '').split(/\r?\n/);
+  const html = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block
+    const fenceMatch = line.match(/^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_-]*)\s*$/);
+    if (fenceMatch) {
+      const fence = fenceMatch[1];
+      const lang = fenceMatch[2] || '';
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith(fence)) {
+        codeLines.push(highlightCodeLine(lines[i], lang));
+        i++;
+      }
+      if (i < lines.length) i++;
+      html.push(`<pre><code>${codeLines.join('\n')}</code></pre>`);
+      continue;
+    }
+
+    // Blank line
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+
+    // Heading
+    const hMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (hMatch) {
+      const level = hMatch[1].length;
+      html.push(`<h${level}>${formatInlineMarkdown(hMatch[2].trim())}</h${level}>`);
+      i++;
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^\s*([-*_])\s*\1\s*\1[\s-*_]*$/.test(line)) {
+      html.push('<hr />');
+      i++;
+      continue;
+    }
+
+    // GFM Table
+    if (
+      line.includes('|') &&
+      i + 1 < lines.length &&
+      /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(lines[i + 1])
+    ) {
+      const parseRow = (r) =>
+        r
+          .trim()
+          .replace(/^\|/, '')
+          .replace(/\|$/, '')
+          .split('|')
+          .map((c) => formatInlineMarkdown(c.trim()));
+
+      const headers = parseRow(line);
+      i += 2;
+      const bodyRows = [];
+      while (i < lines.length && lines[i].trim() && lines[i].includes('|')) {
+        bodyRows.push(parseRow(lines[i]));
+        i++;
+      }
+      const thead = `<thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>`;
+      const tbody = `<tbody>${bodyRows
+        .map((r) => `<tr>${headers.map((_, idx) => `<td>${r[idx] ?? ''}</td>`).join('')}</tr>`)
+        .join('')}</tbody>`;
+      html.push(`<table>${thead}${tbody}</table>`);
+      continue;
+    }
+
+    // Blockquote
+    if (/^\s*>\s?/.test(line)) {
+      const qLines = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        qLines.push(formatInlineMarkdown(lines[i].replace(/^\s*>\s?/, '')));
+        i++;
+      }
+      html.push(`<blockquote>${qLines.join('<br />')}</blockquote>`);
+      continue;
+    }
+
+    // Unordered or ordered list
+    if (/^\s*([-*+]|\d+\.)\s+/.test(line)) {
+      const isOrdered = /^\s*\d+\.\s+/.test(line);
+      const tag = isOrdered ? 'ol' : 'ul';
+      const items = [];
+      while (i < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) {
+        let itemText = lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, '');
+        const taskMatch = itemText.match(/^\[([ xX])\]\s+(.*)$/);
+        if (taskMatch) {
+          const checked = taskMatch[1].toLowerCase() === 'x' ? 'checked disabled' : 'disabled';
+          items.push(
+            `<li style="list-style:none;margin-left:-1.2em"><input type="checkbox" ${checked} /> ${formatInlineMarkdown(taskMatch[2])}</li>`,
+          );
+        } else {
+          items.push(`<li>${formatInlineMarkdown(itemText)}</li>`);
+        }
+        i++;
+      }
+      html.push(`<${tag}>${items.join('')}</${tag}>`);
+      continue;
+    }
+
+    // Paragraph
+    const pLines = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^(#{1,6})\s+/.test(lines[i]) &&
+      !/^\s*(`{3,}|~{3,})/.test(lines[i]) &&
+      !/^\s*>\s?/.test(lines[i]) &&
+      !/^\s*([-*+]|\d+\.)\s+/.test(lines[i]) &&
+      !(
+        lines[i].includes('|') &&
+        i + 1 < lines.length &&
+        /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(lines[i + 1])
+      )
+    ) {
+      pLines.push(formatInlineMarkdown(lines[i]));
+      i++;
+    }
+    html.push(`<p>${pLines.join('<br />')}</p>`);
+  }
+
+  return html.join('\n');
+}
+
+function setPreviewSplitOpen(isOpen) {
+  $mainSplit.classList.toggle('preview-open', Boolean(isOpen));
+}
+
+function renderPreviewHeaderControls() {
+  const data = state.previewData;
+  const item = state.previewItem;
+  if (!item) {
+    $previewTitle.textContent = t('previewEmptyTitle');
+    $previewMeta.textContent = '';
+    $previewModeTabs.classList.remove('visible');
+    if ($btnPreviewWrap) $btnPreviewWrap.style.display = 'none';
+    if ($btnPreviewCopyContent) $btnPreviewCopyContent.style.display = 'none';
+    $btnPreviewCopyRel.style.display = 'none';
+    $btnPreviewCopyAbs.style.display = 'none';
+    $btnPreviewOpenNative.style.display = 'none';
+    return;
+  }
+
+  $previewTitle.textContent = item.relPath || item.name;
+  $previewTitle.title = item.absPath || item.relPath || item.name;
+  $previewMeta.textContent = data?.size !== undefined ? formatFileSize(data.size) : '';
+
+  const ext = (data?.ext || item.ext || '').toLowerCase();
+  const hasRenderTab = isMarkdownExt(ext) || (data?.isImage && ext === 'svg');
+  $previewModeTabs.classList.toggle('visible', Boolean(hasRenderTab));
+  if ($btnModeRender) $btnModeRender.classList.toggle('active', state.previewRenderMode === 'render');
+  if ($btnModeRaw) $btnModeRaw.classList.toggle('active', state.previewRenderMode === 'raw');
+
+  const showingRawCode = !data?.isImage && (!isMarkdownExt(ext) || state.previewRenderMode === 'raw');
+  const showingSvgRaw = data?.isImage && ext === 'svg' && state.previewRenderMode === 'raw';
+  const showCodeTools = Boolean(data && !data.isBinary && (showingRawCode || showingSvgRaw));
+
+  if ($btnPreviewWrap) {
+    $btnPreviewWrap.style.display = showCodeTools ? '' : 'none';
+    $btnPreviewWrap.classList.toggle('active', state.previewWrap);
+  }
+  if ($btnPreviewCopyContent) {
+    $btnPreviewCopyContent.style.display = data && !data.isBinary && data.content ? '' : 'none';
+  }
+  $btnPreviewCopyRel.style.display = '';
+  $btnPreviewCopyAbs.style.display = '';
+  $btnPreviewOpenNative.style.display = '';
+}
+
+function renderPreviewContent() {
+  renderPreviewHeaderControls();
+  $previewBody.innerHTML = '';
+
+  if (!state.previewItem) {
+    setEmptyMessage($previewBody, t('previewEmptyHint'));
+    return;
+  }
+
+  const data = state.previewData;
+  if (!data) {
+    setEmptyMessage($previewBody, t('previewLoading'));
+    return;
+  }
+
+  if (data.error) {
+    setEmptyMessage($previewBody, t('previewReadError', data.error));
+    return;
+  }
+
+  const ext = (data.ext || state.previewItem.ext || '').toLowerCase();
+
+  // 1. Image view (unless SVG in Raw mode)
+  if (data.isImage && data.dataUrl && !(ext === 'svg' && state.previewRenderMode === 'raw')) {
+    const wrap = document.createElement('div');
+    wrap.className = 'img-view';
+    const frame = document.createElement('div');
+    frame.className = 'img-frame';
+    const img = document.createElement('img');
+    img.src = data.dataUrl;
+    img.alt = data.name || '';
+    const cap = document.createElement('div');
+    cap.className = 'img-caption';
+    cap.textContent = `${data.name} (${formatFileSize(data.size)})`;
+    img.onload = () => {
+      if (img.naturalWidth && img.naturalHeight) {
+        cap.textContent = `${data.name} — ${img.naturalWidth} × ${img.naturalHeight} px (${formatFileSize(data.size)})`;
+      }
+    };
+    frame.appendChild(img);
+    wrap.appendChild(frame);
+    wrap.appendChild(cap);
+    $previewBody.appendChild(wrap);
+    return;
+  }
+
+  // 2. Binary non-image file
+  if (data.isBinary) {
+    setEmptyMessage($previewBody, t('previewBinary', (data.size / 1024).toFixed(1)));
+    return;
+  }
+
+  // 3. Markdown rendered view
+  if (isMarkdownExt(ext) && state.previewRenderMode === 'render') {
+    const mdDiv = document.createElement('div');
+    mdDiv.className = 'md-view';
+    mdDiv.innerHTML =
+      renderMarkdownToHtml(data.content) +
+      (data.truncated ? `<p style="color:var(--text-tertiary)">${escapeHtml(t('previewTruncated'))}</p>` : '');
+    $previewBody.appendChild(mdDiv);
+    return;
+  }
+
+  // 4. Code / Raw line-numbered view (line numbers have user-select: none)
+  const codeWrap = document.createElement('div');
+  codeWrap.className = 'code-view' + (state.previewWrap ? ' wrap' : '');
+  const lines = String(data.content || '').split(/\r?\n/);
+  const frag = document.createDocumentFragment();
+
+  for (let idx = 0; idx < lines.length; idx++) {
+    const row = document.createElement('div');
+    row.className = 'code-line';
+
+    const ln = document.createElement('span');
+    ln.className = 'code-ln';
+    ln.textContent = String(idx + 1);
+
+    const lc = document.createElement('span');
+    lc.className = 'code-lc';
+    lc.innerHTML = highlightCodeLine(lines[idx], ext) || ' ';
+
+    row.appendChild(ln);
+    row.appendChild(lc);
+    frag.appendChild(row);
+  }
+
+  if (data.truncated) {
+    const truncRow = document.createElement('div');
+    truncRow.className = 'code-line';
+    truncRow.style.color = 'var(--text-tertiary)';
+    truncRow.style.padding = '8px 12px';
+    truncRow.textContent = t('previewTruncated').trim();
+    frag.appendChild(truncRow);
+  }
+
+  codeWrap.appendChild(frag);
+  $previewBody.appendChild(codeWrap);
+}
+
 async function openFileInNativePane(item, rootPath) {
   try {
     const result = await app.request(
@@ -578,10 +1018,15 @@ async function openFileInNativePane(item, rootPath) {
 
 async function openFileInlinePreview(item, rootPath) {
   const seq = ++previewSeq;
+  const ext = (item.ext || '').toLowerCase();
+  const prevExt = (state.previewItem?.ext || '').toLowerCase();
+  if (ext !== prevExt) {
+    state.previewRenderMode = isMarkdownExt(ext) || ext === 'svg' ? 'render' : 'raw';
+  }
   state.previewItem = { ...item, rootPath };
-  $previewTitle.textContent = item.relPath || item.name;
-  $previewBody.textContent = t('previewLoading');
-  $previewPane.classList.add('open');
+  state.previewData = null;
+  setPreviewSplitOpen(true);
+  renderPreviewContent();
 
   try {
     const data = await callTool('read_file_preview', {
@@ -589,20 +1034,20 @@ async function openFileInlinePreview(item, rootPath) {
       relPath: item.relPath,
     });
     if (seq !== previewSeq) return;
-    if (data.isBinary) {
-      $previewBody.textContent = t('previewBinary', (data.size / 1024).toFixed(1));
-    } else {
-      const lines = data.content.split(/\r?\n/);
-      const pad = String(lines.length).length;
-      const numbered = lines
-        .map((line, idx) => `${String(idx + 1).padStart(pad, ' ')} │ ${line}`)
-        .join('\n');
-      $previewBody.textContent =
-        numbered + (data.truncated ? t('previewTruncated') : '');
-    }
+    state.previewData = data;
+    renderPreviewContent();
   } catch (err) {
     if (seq !== previewSeq) return;
-    $previewBody.textContent = t('previewReadError', err.message);
+    state.previewData = { error: err.message };
+    renderPreviewContent();
+  }
+}
+
+async function handleFileClick(item, rootPath) {
+  if (state.openMode === 'split') {
+    await openFileInlinePreview(item, rootPath);
+  } else {
+    await openFileInNativePane(item, rootPath);
   }
 }
 
@@ -891,7 +1336,7 @@ function appendDirChildren(container, rootPath, relPath, depth) {
         toggleDir(rootPath, item.relPath);
       } else {
         renderTree();
-        openFileInNativePane(item, rootPath);
+        handleFileClick(item, rootPath);
       }
     };
 
@@ -1008,7 +1453,7 @@ function renderSearchResults(container) {
         revealInTree(item.rootPath, item.relPath, true);
       } else {
         renderTree();
-        openFileInNativePane(item, item.rootPath);
+        handleFileClick(item, item.rootPath);
       }
     };
 
@@ -1209,6 +1654,14 @@ function hydrateFromInitialData(data) {
       // ignore
     }
   }
+  if (data.openMode === 'split' || data.openMode === 'native') {
+    state.openMode = data.openMode;
+    try {
+      window.localStorage?.setItem('workspace_explorer_open_mode', state.openMode);
+    } catch {
+      // ignore
+    }
+  }
   state.projects = Array.isArray(data.projects) ? data.projects : [];
   state.activeProject = data.activeProject || null;
   state.viewMode = data.viewMode || (state.activeProject ? 'single' : 'all');
@@ -1235,6 +1688,7 @@ function hydrateFromInitialData(data) {
   renderHeader();
   renderSearchControls();
   renderTree();
+  renderPreviewContent();
 
   if (
     state.viewMode === 'single' &&
@@ -1248,6 +1702,34 @@ function hydrateFromInitialData(data) {
 // Event bindings
 $projectSelect.onchange = (e) => selectProject(e.target.value);
 
+if ($btnOpenMode) {
+  $btnOpenMode.onclick = async () => {
+    state.openMode = state.openMode === 'split' ? 'native' : 'split';
+    try {
+      window.localStorage?.setItem('workspace_explorer_open_mode', state.openMode);
+    } catch {
+      // ignore
+    }
+    hideContextMenu();
+    renderHeader();
+    if (state.openMode === 'split') {
+      setPreviewSplitOpen(true);
+      renderPreviewContent();
+      showToast(t('toastModeSplit'));
+    } else {
+      if (!state.previewItem) {
+        setPreviewSplitOpen(false);
+      }
+      showToast(t('toastModeNative'));
+    }
+    try {
+      await callTool('set_language', { openMode: state.openMode });
+    } catch {
+      // ignore
+    }
+  };
+}
+
 if ($btnLang) {
   $btnLang.onclick = async () => {
     state.lang = state.lang === 'en' ? 'zh' : 'en';
@@ -1260,9 +1742,7 @@ if ($btnLang) {
     renderHeader();
     renderSearchControls();
     renderTree();
-    if (state.previewItem && $previewPane.classList.contains('open')) {
-      openFileInlinePreview(state.previewItem, state.previewItem.rootPath);
-    }
+    renderPreviewContent();
     showToast(t('toastLangSwitched'));
     try {
       await callTool('set_language', { lang: state.lang });
@@ -1375,11 +1855,45 @@ $btnRegex.onclick = () => {
 
 renderStaticTexts();
 renderSearchControls();
+renderPreviewContent();
+
+if ($btnModeRender) {
+  $btnModeRender.onclick = () => {
+    state.previewRenderMode = 'render';
+    renderPreviewContent();
+  };
+}
+
+if ($btnModeRaw) {
+  $btnModeRaw.onclick = () => {
+    state.previewRenderMode = 'raw';
+    renderPreviewContent();
+  };
+}
+
+if ($btnPreviewWrap) {
+  $btnPreviewWrap.onclick = () => {
+    state.previewWrap = !state.previewWrap;
+    renderPreviewContent();
+  };
+}
+
+if ($btnPreviewCopyContent) {
+  $btnPreviewCopyContent.onclick = async () => {
+    if (state.previewData?.content) {
+      await copyText(state.previewData.content, t('labelFileContent'));
+      if (state.previewItem?.name) {
+        showToast(t('toastCopiedContent', state.previewItem.name));
+      }
+    }
+  };
+}
 
 $btnPreviewClose.onclick = () => {
   previewSeq++;
-  $previewPane.classList.remove('open');
+  setPreviewSplitOpen(false);
   state.previewItem = null;
+  state.previewData = null;
 };
 
 $btnPreviewCopyRel.onclick = () => {
@@ -1396,20 +1910,25 @@ $btnPreviewOpenNative.onclick = () => {
   }
 };
 
-// Drag to resize preview pane
+// Drag left/right to resize the right-docked file tree width
 let isResizing = false;
 $previewResizer.addEventListener('mousedown', (e) => {
   e.preventDefault();
   isResizing = true;
+  $previewResizer.classList.add('dragging');
 });
 window.addEventListener('mousemove', (e) => {
   if (!isResizing) return;
-  const newHeight = window.innerHeight - e.clientY;
-  const clamped = Math.max(120, Math.min(window.innerHeight * 0.8, newHeight));
-  $previewPane.style.height = `${clamped}px`;
+  const totalW = $mainSplit.clientWidth || window.innerWidth;
+  const newTreeWidth = totalW - e.clientX;
+  const clamped = Math.max(170, Math.min(totalW * 0.72, newTreeWidth));
+  $mainSplit.style.setProperty('--tree-width', `${Math.round(clamped)}px`);
 });
 window.addEventListener('mouseup', () => {
-  isResizing = false;
+  if (isResizing) {
+    isResizing = false;
+    $previewResizer.classList.remove('dragging');
+  }
 });
 
 document.addEventListener('click', (e) => {
