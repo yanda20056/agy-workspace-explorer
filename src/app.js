@@ -22,7 +22,213 @@ function parseDirKey(key) {
   return { rootPath: key.slice(0, idx), relPath: key.slice(idx + 1) };
 }
 
+function detectInitialLang() {
+  try {
+    const saved = window.localStorage?.getItem('workspace_explorer_lang');
+    if (saved === 'zh' || saved === 'en') return saved;
+  } catch {
+    // ignore storage restriction
+  }
+  return 'en';
+}
+
+const I18N = {
+  en: {
+    switchProjectTitle: 'Switch Project',
+    switchLangTitle: 'Switch language (Current: English → Click for 中文)',
+    langBtnText: 'EN',
+    allModeTitle: 'Toggle: All Projects / Current Project View',
+    collapseAllTitle: 'Collapse All',
+    toggleHiddenTitle: 'Show/Hide Dotfiles (starting with .)',
+    refreshTitle: 'Refresh Directory',
+    searchClearTitle: 'Clear Search',
+    fuzzyTitle: 'Fuzzy Match — exact substring match when off',
+    caseTitle: 'Match Case',
+    regexTitle: 'Use Regular Expression',
+    resizerTitle: 'Drag to resize preview pane',
+    copyRelBtn: 'Rel Path',
+    copyRelTitle: 'Copy Relative Path',
+    copyAbsBtn: 'Full Path',
+    copyAbsTitle: 'Copy Full Path',
+    openNativeBtn: 'Open Tab',
+    openNativeTitle: 'Open in Native Tab',
+    closePreviewTitle: 'Close Preview',
+    allProjectsOption: (n) => `All Projects (${n})`,
+    allProjectsSubbar: (n) => `${n} projects (click to expand, or click "Focus" to view single project)`,
+    allProjectsBadge: 'All Projects',
+    badgeArg: 'Active Chat Project',
+    badgeActiveChat: 'Active Chat Project',
+    badgeSelectedProject: 'Selected Project',
+    badgeRoots: 'Active Workspace',
+    badgeCwd: 'Active Workspace',
+    badgeManual: 'Manual Selection',
+    badgeSingleKnown: 'Current Project',
+    badgeDefault: 'Current Project',
+    noProjectSubbar: 'No local project detected',
+    loadingProjectsSubbar: 'Loading projects...',
+    connectingEmpty: 'Connecting to Workspace Explorer...',
+    loadingDirEmpty: 'Loading project directory...',
+    noProjectsEmpty: 'No local projects found. Please add a project in Antigravity Projects sidebar.',
+    selectProjectEmpty: 'Please select a project above',
+    loadingNode: 'Loading...',
+    emptyDirNode: '(empty directory)',
+    searchingEmpty: 'Searching...',
+    regexErrorEmpty: (err) => `Regex syntax error: ${err}`,
+    noMatchEmpty: (q) => `No files or folders matching "${q}"`,
+    placeholderRegexCase: 'Regex search (case-sensitive, e.g. \\.scene$)...',
+    placeholderRegex: 'Regex search (e.g. \\.scene$ or ^Cfg)...',
+    placeholderFuzzyCase: 'Fuzzy search (case-sensitive)...',
+    placeholderFuzzy: 'Fuzzy search file name or path...',
+    placeholderExactCase: 'Exact substring search (case-sensitive)...',
+    placeholderExact: 'Exact substring search file name or path...',
+    rowRevealTitle: 'Reveal in Tree',
+    rowPreviewTitle: 'Inline Preview',
+    rowFocusBtn: 'Focus',
+    rowFocusTitle: 'Focus this project',
+    rowCopyProjPathTitle: 'Copy Project Full Path',
+    ctxCollapseProject: 'Collapse Project',
+    ctxExpandProject: 'Expand Project',
+    ctxFocusProject: 'Focus Project (Single Project View)',
+    ctxOpenNative: 'Open File (Native Tab)',
+    ctxInlinePreview: 'Inline Preview File',
+    ctxRevealFile: 'Reveal in Tree',
+    ctxRevealDir: 'Expand & Reveal in Tree',
+    ctxCollapseDir: 'Collapse Folder',
+    ctxExpandDir: 'Expand Folder',
+    ctxRevealInOs: 'Reveal in File Explorer',
+    ctxCopyRel: 'Copy Relative Path',
+    ctxCopyAbs: 'Copy Full Path',
+    ctxCopyName: 'Copy Name',
+    ctxAttachChat: 'Attach to Chat Context',
+    labelPath: 'path',
+    labelRelPath: 'relative path',
+    labelAbsPath: 'full path',
+    labelName: 'name',
+    labelProjPath: 'project path',
+    toastCopied: (label, text) => `Copied ${label}: ${text}`,
+    toastCopyFailed: (text) => `Copy failed, please copy manually: ${text}`,
+    toastReadDirFailed: (msg) => `Failed to read directory: ${msg}`,
+    toastOpened: (name) => `Opened: ${name}`,
+    toastRevealedInOs: (name) => `Opened in system file manager: ${name}`,
+    toastRevealInOsFailed: (msg) => `Failed to open system file manager: ${msg}`,
+    toastAttached: (p) => `Attached to chat context: ${p}`,
+    toastSearchFailed: (msg) => `Search failed: ${msg}`,
+    toastCollapsedAll: 'Collapsed all folders',
+    toastRefreshed: 'Directory refreshed',
+    toastFuzzyOn: 'Fuzzy match enabled (~)',
+    toastFuzzyOff: 'Switched to exact substring match',
+    toastCaseOn: 'Match case enabled (Aa)',
+    toastCaseOff: 'Match case disabled',
+    toastRegexOn: 'Regular expression search enabled (.*)',
+    toastRegexOff: 'Regular expression search disabled',
+    toastLangSwitched: 'Language: English',
+    previewLoading: 'Loading file content...',
+    previewBinary: (kb) => `[Binary file, size ${kb} KB, text preview not supported]`,
+    previewTruncated: '\n\n... [File exceeds 200KB, output truncated]',
+    previewReadError: (msg) => `Failed to read file: ${msg}`,
+    scriptError: (msg) => `Script error: ${msg}`,
+    connectError: (msg) => `Failed to connect to host: ${msg}`,
+  },
+  zh: {
+    switchProjectTitle: '切换工程',
+    switchLangTitle: '切换语言 (当前: 中文 → 点击切换为 English)',
+    langBtnText: '中',
+    allModeTitle: '切换：全部工程视图 / 当前工程视图',
+    collapseAllTitle: '全部折叠',
+    toggleHiddenTitle: '显示/隐藏以 . 开头的隐藏文件',
+    refreshTitle: '刷新目录',
+    searchClearTitle: '清除搜索',
+    fuzzyTitle: '模糊查找 (Fuzzy Match) — 关闭时为精确子串匹配',
+    caseTitle: '区分大小写 (Match Case)',
+    regexTitle: '使用正则表达式 (Use Regular Expression)',
+    resizerTitle: '拖动调整预览区高度',
+    copyRelBtn: '相对路径',
+    copyRelTitle: '复制相对路径',
+    copyAbsBtn: '绝对路径',
+    copyAbsTitle: '复制绝对路径',
+    openNativeBtn: '标签页打开',
+    openNativeTitle: '在原生标签页打开',
+    closePreviewTitle: '关闭预览',
+    allProjectsOption: (n) => `全部工程 (${n})`,
+    allProjectsSubbar: (n) => `共 ${n} 个工程（点击展开，或点右侧“聚焦”单看某工程）`,
+    allProjectsBadge: '全部工程',
+    badgeArg: '当前对话工程',
+    badgeActiveChat: '当前对话工程',
+    badgeSelectedProject: '当前选中工程',
+    badgeRoots: '当前工作区',
+    badgeCwd: '当前工作区',
+    badgeManual: '手动选择',
+    badgeSingleKnown: '当前工程',
+    badgeDefault: '当前工程',
+    noProjectSubbar: '未检测到本地工程',
+    loadingProjectsSubbar: '正在加载工程...',
+    connectingEmpty: '正在连接 Workspace Explorer...',
+    loadingDirEmpty: '正在加载工程目录...',
+    noProjectsEmpty: '未找到任何本地工程，请在 Antigravity 左侧 Projects 添加工程。',
+    selectProjectEmpty: '请在上方选择一个工程',
+    loadingNode: '加载中...',
+    emptyDirNode: '(空目录)',
+    searchingEmpty: '正在搜索...',
+    regexErrorEmpty: (err) => `正则表达式语法错误: ${err}`,
+    noMatchEmpty: (q) => `未找到匹配 "${q}" 的文件或目录`,
+    placeholderRegexCase: '正则搜索 (区分大小写, 如 \\.scene$)...',
+    placeholderRegex: '正则搜索 (如 \\.scene$ 或 ^Cfg)...',
+    placeholderFuzzyCase: '模糊搜索 (区分大小写)...',
+    placeholderFuzzy: '模糊搜索文件名或路径...',
+    placeholderExactCase: '精确子串搜索 (区分大小写)...',
+    placeholderExact: '精确子串搜索文件名或路径...',
+    rowRevealTitle: '在目录树中定位',
+    rowPreviewTitle: '内置预览',
+    rowFocusBtn: '聚焦',
+    rowFocusTitle: '聚焦此工程',
+    rowCopyProjPathTitle: '复制工程绝对路径',
+    ctxCollapseProject: '折叠工程目录',
+    ctxExpandProject: '展开工程目录',
+    ctxFocusProject: '聚焦此工程 (单工程视图)',
+    ctxOpenNative: '打开文件 (原生标签页)',
+    ctxInlinePreview: '内置预览文件内容',
+    ctxRevealFile: '在目录树中定位',
+    ctxRevealDir: '在目录树中展开定位',
+    ctxCollapseDir: '折叠文件夹',
+    ctxExpandDir: '展开文件夹',
+    ctxRevealInOs: '在系统文件窗口中打开',
+    ctxCopyRel: '复制相对路径',
+    ctxCopyAbs: '复制绝对路径',
+    ctxCopyName: '复制名称',
+    ctxAttachChat: '附到对话上下文',
+    labelPath: '路径',
+    labelRelPath: '相对路径',
+    labelAbsPath: '绝对路径',
+    labelName: '名称',
+    labelProjPath: '工程路径',
+    toastCopied: (label, text) => `已复制${label}: ${text}`,
+    toastCopyFailed: (text) => `复制失败，请手动复制: ${text}`,
+    toastReadDirFailed: (msg) => `读取目录失败: ${msg}`,
+    toastOpened: (name) => `已打开: ${name}`,
+    toastRevealedInOs: (name) => `已在系统文件窗口中打开: ${name}`,
+    toastRevealInOsFailed: (msg) => `打开系统文件窗口失败: ${msg}`,
+    toastAttached: (p) => `已附到对话上下文: ${p}`,
+    toastSearchFailed: (msg) => `搜索失败: ${msg}`,
+    toastCollapsedAll: '已全部折叠',
+    toastRefreshed: '目录已刷新',
+    toastFuzzyOn: '已开启模糊查找 (~)',
+    toastFuzzyOff: '已切换为精确子串查找',
+    toastCaseOn: '已开启区分大小写 (Aa)',
+    toastCaseOff: '已关闭区分大小写',
+    toastRegexOn: '已开启正则表达式查找 (.*)',
+    toastRegexOff: '已关闭正则表达式查找',
+    toastLangSwitched: '语言已切换为: 中文',
+    previewLoading: '正在加载文件内容...',
+    previewBinary: (kb) => `[二进制文件，大小 ${kb} KB，不支持文本预览]`,
+    previewTruncated: '\n\n... [文件超过 200KB，已截断显示]',
+    previewReadError: (msg) => `无法读取文件: ${msg}`,
+    scriptError: (msg) => `脚本错误: ${msg}`,
+    connectError: (msg) => `连接宿主失败: ${msg}`,
+  },
+};
+
 const state = {
+  lang: detectInitialLang(), // 'en' (default) | 'zh'
   projects: [],
   activeProject: null,
   viewMode: 'all', // 'single' | 'all'
@@ -44,14 +250,22 @@ const state = {
   capabilities: {},
   initialized: false,
   lastAutoSignalTime: 0,
+  lastAutoConversationId: null,
   manualOverrideAt: 0,
 };
+
+function t(key, ...args) {
+  const dict = I18N[state.lang] || I18N.en;
+  const val = dict[key] ?? I18N.en[key];
+  return typeof val === 'function' ? val(...args) : val;
+}
 
 let searchSeq = 0;
 let previewSeq = 0;
 
 // DOM elements
 const $projectSelect = document.getElementById('projectSelect');
+const $btnLang = document.getElementById('btnLang');
 const $btnAllMode = document.getElementById('btnAllMode');
 const $btnCollapseAll = document.getElementById('btnCollapseAll');
 const $btnToggleHidden = document.getElementById('btnToggleHidden');
@@ -74,6 +288,31 @@ const $btnPreviewOpenNative = document.getElementById('btnPreviewOpenNative');
 const $btnPreviewClose = document.getElementById('btnPreviewClose');
 const $ctxMenu = document.getElementById('ctxMenu');
 const $toast = document.getElementById('toast');
+
+function renderStaticTexts() {
+  document.documentElement.lang = state.lang === 'zh' ? 'zh-CN' : 'en';
+  $projectSelect.title = t('switchProjectTitle');
+  if ($btnLang) {
+    $btnLang.textContent = t('langBtnText');
+    $btnLang.title = t('switchLangTitle');
+  }
+  $btnAllMode.title = t('allModeTitle');
+  $btnCollapseAll.title = t('collapseAllTitle');
+  $btnToggleHidden.title = t('toggleHiddenTitle');
+  $btnRefresh.title = t('refreshTitle');
+  $searchClear.title = t('searchClearTitle');
+  $btnFuzzy.title = t('fuzzyTitle');
+  $btnCase.title = t('caseTitle');
+  $btnRegex.title = t('regexTitle');
+  $previewResizer.title = t('resizerTitle');
+  $btnPreviewCopyRel.textContent = t('copyRelBtn');
+  $btnPreviewCopyRel.title = t('copyRelTitle');
+  $btnPreviewCopyAbs.textContent = t('copyAbsBtn');
+  $btnPreviewCopyAbs.title = t('copyAbsTitle');
+  $btnPreviewOpenNative.textContent = t('openNativeBtn');
+  $btnPreviewOpenNative.title = t('openNativeTitle');
+  $btnPreviewClose.title = t('closePreviewTitle');
+}
 
 let toastTimer = null;
 function showToast(msg) {
@@ -117,9 +356,9 @@ async function copyText(text, label) {
     }
   }
   if (ok) {
-    showToast(`已复制${label}: ${text}`);
+    showToast(t('toastCopied', label, text));
   } else {
-    showToast(`复制失败，请手动复制: ${text}`);
+    showToast(t('toastCopyFailed', text));
   }
 }
 
@@ -224,7 +463,7 @@ async function ensureDirLoaded(rootPath, relPath = '', force = false, silentRend
     state.dirCache.set(key, entries);
     return entries;
   } catch (err) {
-    showToast(`读取目录失败: ${err.message}`);
+    showToast(t('toastReadDirFailed', err.message));
     return [];
   } finally {
     state.loadingKeys.delete(key);
@@ -330,7 +569,7 @@ async function openFileInNativePane(item, rootPath) {
     if (result?.isError) {
       await openFileInlinePreview(item, rootPath);
     } else {
-      showToast(`已打开: ${item.name}`);
+      showToast(t('toastOpened', item.name));
     }
   } catch {
     await openFileInlinePreview(item, rootPath);
@@ -341,7 +580,7 @@ async function openFileInlinePreview(item, rootPath) {
   const seq = ++previewSeq;
   state.previewItem = { ...item, rootPath };
   $previewTitle.textContent = item.relPath || item.name;
-  $previewBody.textContent = '正在加载文件内容...';
+  $previewBody.textContent = t('previewLoading');
   $previewPane.classList.add('open');
 
   try {
@@ -351,7 +590,7 @@ async function openFileInlinePreview(item, rootPath) {
     });
     if (seq !== previewSeq) return;
     if (data.isBinary) {
-      $previewBody.textContent = `[二进制文件，大小 ${(data.size / 1024).toFixed(1)} KB，不支持文本预览]`;
+      $previewBody.textContent = t('previewBinary', (data.size / 1024).toFixed(1));
     } else {
       const lines = data.content.split(/\r?\n/);
       const pad = String(lines.length).length;
@@ -359,17 +598,17 @@ async function openFileInlinePreview(item, rootPath) {
         .map((line, idx) => `${String(idx + 1).padStart(pad, ' ')} │ ${line}`)
         .join('\n');
       $previewBody.textContent =
-        numbered + (data.truncated ? '\n\n... [文件超过 200KB，已截断显示]' : '');
+        numbered + (data.truncated ? t('previewTruncated') : '');
     }
   } catch (err) {
     if (seq !== previewSeq) return;
-    $previewBody.textContent = `无法读取文件: ${err.message}`;
+    $previewBody.textContent = t('previewReadError', err.message);
   }
 }
 
 async function attachPathToChat(item) {
   if (!state.capabilities?.updateModelContext) {
-    await copyText(item.relPath || item.absPath, '路径');
+    await copyText(item.relPath || item.absPath, t('labelPath'));
     return;
   }
   try {
@@ -381,9 +620,21 @@ async function attachPathToChat(item) {
         },
       ],
     });
-    showToast(`已附到对话上下文: ${item.relPath || item.name}`);
+    showToast(t('toastAttached', item.relPath || item.name));
   } catch {
-    await copyText(item.relPath || item.absPath, '路径');
+    await copyText(item.relPath || item.absPath, t('labelPath'));
+  }
+}
+
+async function revealInSystemExplorer(item, rootPath) {
+  try {
+    await callTool('reveal_in_os', {
+      rootPath,
+      relPath: item.relPath || '',
+    });
+    showToast(t('toastRevealedInOs', item.name || rootPath));
+  } catch (err) {
+    showToast(t('toastRevealInOsFailed', err.message));
   }
 }
 
@@ -412,36 +663,43 @@ function showContextMenu(x, y, item, rootPath, options = {}) {
 
   if (options.isProjectRoot && options.project) {
     const isOpen = state.expandedProjects.has(options.project.rootPath);
-    addItem(isOpen ? '折叠工程目录' : '展开工程目录', () => toggleProjectRoot(options.project));
-    addItem('聚焦此工程 (单工程视图)', () => selectProject(options.project.rootPath));
+    addItem(isOpen ? t('ctxCollapseProject') : t('ctxExpandProject'), () =>
+      toggleProjectRoot(options.project),
+    );
+    addItem(t('ctxFocusProject'), () => selectProject(options.project.rootPath));
+    addItem(t('ctxRevealInOs'), () => revealInSystemExplorer(item, rootPath));
     addSep();
   } else if (!item.isDir) {
-    addItem('打开文件 (原生标签页)', () => openFileInNativePane(item, rootPath));
-    addItem('内置预览文件内容', () => openFileInlinePreview(item, rootPath));
+    addItem(t('ctxOpenNative'), () => openFileInNativePane(item, rootPath));
+    addItem(t('ctxInlinePreview'), () => openFileInlinePreview(item, rootPath));
     if (options.fromSearch) {
-      addItem('在目录树中定位', () => revealInTree(rootPath, item.relPath, false));
+      addItem(t('ctxRevealFile'), () => revealInTree(rootPath, item.relPath, false));
     }
+    addItem(t('ctxRevealInOs'), () => revealInSystemExplorer(item, rootPath));
     addSep();
   } else {
     if (options.fromSearch) {
-      addItem('在目录树中展开定位', () => revealInTree(rootPath, item.relPath, true));
+      addItem(t('ctxRevealDir'), () => revealInTree(rootPath, item.relPath, true));
     } else {
       const k = makeDirKey(rootPath, item.relPath);
       const isOpen = state.expandedDirs.has(k);
-      addItem(isOpen ? '折叠文件夹' : '展开文件夹', () => toggleDir(rootPath, item.relPath));
+      addItem(isOpen ? t('ctxCollapseDir') : t('ctxExpandDir'), () =>
+        toggleDir(rootPath, item.relPath),
+      );
     }
+    addItem(t('ctxRevealInOs'), () => revealInSystemExplorer(item, rootPath));
     addSep();
   }
 
   if (item.relPath) {
-    addItem('复制相对路径 (Copy Relative Path)', () => copyText(item.relPath, '相对路径'));
+    addItem(t('ctxCopyRel'), () => copyText(item.relPath, t('labelRelPath')));
   }
-  addItem('复制绝对路径 (Copy Full Path)', () => copyText(item.absPath, '绝对路径'));
-  addItem('复制名称 (Copy Name)', () => copyText(item.name, '名称'));
+  addItem(t('ctxCopyAbs'), () => copyText(item.absPath, t('labelAbsPath')));
+  addItem(t('ctxCopyName'), () => copyText(item.name, t('labelName')));
 
   if (state.capabilities?.updateModelContext) {
     addSep();
-    addItem('附到对话上下文', () => attachPathToChat(item));
+    addItem(t('ctxAttachChat'), () => attachPathToChat(item));
   }
 
   $ctxMenu.classList.add('open');
@@ -476,11 +734,12 @@ async function toggleProjectRoot(project) {
 }
 
 function renderHeader() {
+  renderStaticTexts();
   $projectSelect.innerHTML = '';
 
   const allOpt = document.createElement('option');
   allOpt.value = '__ALL__';
-  allOpt.textContent = `全部工程 (${state.projects.length})`;
+  allOpt.textContent = t('allProjectsOption', state.projects.length);
   $projectSelect.appendChild(allOpt);
 
   for (const p of state.projects) {
@@ -490,28 +749,36 @@ function renderHeader() {
     $projectSelect.appendChild(opt);
   }
 
+  if (!state.initialized) {
+    $projectSelect.value = '__ALL__';
+    $subbarPath.textContent = t('loadingProjectsSubbar');
+    $subbarBadge.textContent = '';
+    $btnToggleHidden.classList.toggle('active', state.showHidden);
+    return;
+  }
+
   if (state.viewMode === 'all') {
     $projectSelect.value = '__ALL__';
     $btnAllMode.classList.add('active');
-    $subbarPath.textContent = `共 ${state.projects.length} 个工程（点击展开，或点右侧“聚焦”单看某工程）`;
-    $subbarBadge.textContent = '全部工程';
+    $subbarPath.textContent = t('allProjectsSubbar', state.projects.length);
+    $subbarBadge.textContent = t('allProjectsBadge');
   } else if (state.activeProject) {
     $projectSelect.value = state.activeProject.rootPath;
     $btnAllMode.classList.remove('active');
     $subbarPath.textContent = state.activeProject.rootPath;
     const badgeMap = {
-      arg: '当前对话工程',
-      'active-chat': '当前对话工程',
-      'selected-project': '当前选中工程',
-      roots: '当前工作区',
-      cwd: '当前工作区',
-      manual: '手动选择',
-      'single-known': '当前工程',
+      arg: t('badgeArg'),
+      'active-chat': t('badgeActiveChat'),
+      'selected-project': t('badgeSelectedProject'),
+      roots: t('badgeRoots'),
+      cwd: t('badgeCwd'),
+      manual: t('badgeManual'),
+      'single-known': t('badgeSingleKnown'),
     };
-    $subbarBadge.textContent = badgeMap[state.detectedBy] || '当前工程';
+    $subbarBadge.textContent = badgeMap[state.detectedBy] || t('badgeDefault');
   } else {
     $projectSelect.value = '__ALL__';
-    $subbarPath.textContent = '未检测到本地工程';
+    $subbarPath.textContent = t('noProjectSubbar');
     $subbarBadge.textContent = '';
   }
 
@@ -525,7 +792,7 @@ function createRowActions(item, rootPath, fromSearch = false) {
   if (fromSearch) {
     const btnReveal = document.createElement('button');
     btnReveal.className = 'mini-btn';
-    btnReveal.title = '在目录树中定位';
+    btnReveal.title = t('rowRevealTitle');
     btnReveal.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>`;
     btnReveal.onclick = (e) => {
       e.stopPropagation();
@@ -537,7 +804,7 @@ function createRowActions(item, rootPath, fromSearch = false) {
   if (!item.isDir) {
     const btnPrev = document.createElement('button');
     btnPrev.className = 'mini-btn';
-    btnPrev.title = '内置预览';
+    btnPrev.title = t('rowPreviewTitle');
     btnPrev.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`;
     btnPrev.onclick = (e) => {
       e.stopPropagation();
@@ -549,23 +816,23 @@ function createRowActions(item, rootPath, fromSearch = false) {
   if (item.relPath) {
     const btnRel = document.createElement('button');
     btnRel.className = 'mini-btn';
-    btnRel.title = '复制相对路径';
+    btnRel.title = t('copyRelTitle');
     btnRel.textContent = './';
     btnRel.style.fontFamily = 'var(--font-mono)';
     btnRel.onclick = (e) => {
       e.stopPropagation();
-      copyText(item.relPath, '相对路径');
+      copyText(item.relPath, t('labelRelPath'));
     };
     wrap.appendChild(btnRel);
   }
 
   const btnAbs = document.createElement('button');
   btnAbs.className = 'mini-btn';
-  btnAbs.title = '复制绝对路径';
+  btnAbs.title = t('copyAbsTitle');
   btnAbs.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
   btnAbs.onclick = (e) => {
     e.stopPropagation();
-    copyText(item.absPath, '绝对路径');
+    copyText(item.absPath, t('labelAbsPath'));
   };
   wrap.appendChild(btnAbs);
 
@@ -579,7 +846,7 @@ function appendDirChildren(container, rootPath, relPath, depth) {
     loading.className = 'tree-row';
     loading.style.paddingLeft = `${8 + depth * 14}px`;
     loading.style.color = 'var(--text-tertiary)';
-    loading.textContent = '加载中...';
+    loading.textContent = t('loadingNode');
     container.appendChild(loading);
     return;
   }
@@ -591,7 +858,7 @@ function appendDirChildren(container, rootPath, relPath, depth) {
     empty.style.paddingLeft = `${24 + depth * 14}px`;
     empty.style.color = 'var(--text-tertiary)';
     empty.style.fontStyle = 'italic';
-    empty.textContent = '(空目录)';
+    empty.textContent = t('emptyDirNode');
     container.appendChild(empty);
     return;
   }
@@ -656,16 +923,16 @@ function renderSearchControls() {
 
   if (state.searchRegex) {
     $searchInput.placeholder = state.searchCaseSensitive
-      ? '正则搜索 (区分大小写, 如 \\.scene$)...'
-      : '正则搜索 (如 \\.scene$ 或 ^Cfg)...';
+      ? t('placeholderRegexCase')
+      : t('placeholderRegex');
   } else if (state.searchFuzzy) {
     $searchInput.placeholder = state.searchCaseSensitive
-      ? '模糊搜索 (区分大小写)...'
-      : '模糊搜索文件名或路径...';
+      ? t('placeholderFuzzyCase')
+      : t('placeholderFuzzy');
   } else {
     $searchInput.placeholder = state.searchCaseSensitive
-      ? '精确子串搜索 (区分大小写)...'
-      : '精确子串搜索文件名或路径...';
+      ? t('placeholderExactCase')
+      : t('placeholderExact');
   }
 }
 
@@ -703,16 +970,16 @@ function createHighlightedSpan(text, ranges, className, prefixText = '') {
 
 function renderSearchResults(container) {
   if (state.searching) {
-    setEmptyMessage(container, '正在搜索...');
+    setEmptyMessage(container, t('searchingEmpty'));
     return;
   }
   if (state.regexError) {
-    setEmptyMessage(container, `正则表达式语法错误: ${state.regexError}`);
+    setEmptyMessage(container, t('regexErrorEmpty', state.regexError));
     return;
   }
   const results = state.searchResults || [];
   if (results.length === 0) {
-    setEmptyMessage(container, `未找到匹配 "${state.searchQuery}" 的文件或目录`);
+    setEmptyMessage(container, t('noMatchEmpty', state.searchQuery));
     return;
   }
 
@@ -767,9 +1034,7 @@ function renderTree() {
   if (state.projects.length === 0) {
     setEmptyMessage(
       $treeContainer,
-      state.initialized
-        ? '未找到任何本地工程，请在 Antigravity 左侧 Projects 添加工程。'
-        : '正在加载工程目录...',
+      state.initialized ? t('noProjectsEmpty') : t('loadingDirEmpty'),
     );
     return;
   }
@@ -795,8 +1060,8 @@ function renderTree() {
 
       const btnFocus = document.createElement('button');
       btnFocus.className = 'mini-btn';
-      btnFocus.title = '聚焦此工程';
-      btnFocus.textContent = '聚焦';
+      btnFocus.title = t('rowFocusTitle');
+      btnFocus.textContent = t('rowFocusBtn');
       btnFocus.onclick = (e) => {
         e.stopPropagation();
         selectProject(project.rootPath);
@@ -805,11 +1070,11 @@ function renderTree() {
 
       const btnCopy = document.createElement('button');
       btnCopy.className = 'mini-btn';
-      btnCopy.title = '复制工程绝对路径';
+      btnCopy.title = t('rowCopyProjPathTitle');
       btnCopy.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
       btnCopy.onclick = (e) => {
         e.stopPropagation();
-        copyText(project.rootPath, '工程路径');
+        copyText(project.rootPath, t('labelProjPath'));
       };
       actions.appendChild(btnCopy);
 
@@ -837,7 +1102,7 @@ function renderTree() {
   }
 
   if (!state.activeProject) {
-    setEmptyMessage($treeContainer, '请在上方选择一个工程');
+    setEmptyMessage($treeContainer, t('selectProjectEmpty'));
     return;
   }
 
@@ -922,7 +1187,7 @@ async function runSearch() {
     state.searchResults = data?.results || [];
   } catch (err) {
     if (seq !== searchSeq) return;
-    showToast(`搜索失败: ${err.message}`);
+    showToast(t('toastSearchFailed', err.message));
     state.searchResults = [];
   } finally {
     if (seq === searchSeq) {
@@ -936,10 +1201,21 @@ async function runSearch() {
 function hydrateFromInitialData(data) {
   if (!data) return;
   state.initialized = true;
+  if (data.lang === 'zh' || data.lang === 'en') {
+    state.lang = data.lang;
+    try {
+      window.localStorage?.setItem('workspace_explorer_lang', state.lang);
+    } catch {
+      // ignore
+    }
+  }
   state.projects = Array.isArray(data.projects) ? data.projects : [];
   state.activeProject = data.activeProject || null;
   state.viewMode = data.viewMode || (state.activeProject ? 'single' : 'all');
   state.detectedBy = data.detectedBy || 'all';
+  if (data.activeConversationId) {
+    state.lastAutoConversationId = data.activeConversationId;
+  }
   if (data.signalTime) {
     state.lastAutoSignalTime = Math.max(state.lastAutoSignalTime, data.signalTime);
   }
@@ -957,6 +1233,7 @@ function hydrateFromInitialData(data) {
   }
 
   renderHeader();
+  renderSearchControls();
   renderTree();
 
   if (
@@ -970,6 +1247,30 @@ function hydrateFromInitialData(data) {
 
 // Event bindings
 $projectSelect.onchange = (e) => selectProject(e.target.value);
+
+if ($btnLang) {
+  $btnLang.onclick = async () => {
+    state.lang = state.lang === 'en' ? 'zh' : 'en';
+    try {
+      window.localStorage?.setItem('workspace_explorer_lang', state.lang);
+    } catch {
+      // ignore
+    }
+    hideContextMenu();
+    renderHeader();
+    renderSearchControls();
+    renderTree();
+    if (state.previewItem && $previewPane.classList.contains('open')) {
+      openFileInlinePreview(state.previewItem, state.previewItem.rootPath);
+    }
+    showToast(t('toastLangSwitched'));
+    try {
+      await callTool('set_language', { lang: state.lang });
+    } catch {
+      // ignore
+    }
+  };
+}
 
 $btnAllMode.onclick = () => {
   if (state.viewMode === 'all') {
@@ -987,7 +1288,7 @@ $btnCollapseAll.onclick = () => {
   state.expandedDirs.clear();
   state.expandedProjects.clear();
   renderTree();
-  showToast('已全部折叠');
+  showToast(t('toastCollapsedAll'));
 };
 
 $btnToggleHidden.onclick = async () => {
@@ -1018,7 +1319,7 @@ $btnRefresh.onclick = async () => {
   if (hasActiveSearch()) {
     await runSearch();
   }
-  showToast('目录已刷新');
+  showToast(t('toastRefreshed'));
 };
 
 $searchInput.oninput = (e) => {
@@ -1045,7 +1346,7 @@ $btnFuzzy.onclick = () => {
   if (state.searchRegex) return;
   state.searchFuzzy = !state.searchFuzzy;
   renderSearchControls();
-  showToast(state.searchFuzzy ? '已开启模糊查找 (~)' : '已切换为精确子串查找');
+  showToast(state.searchFuzzy ? t('toastFuzzyOn') : t('toastFuzzyOff'));
   if (hasActiveSearch()) {
     runSearch();
   }
@@ -1054,7 +1355,7 @@ $btnFuzzy.onclick = () => {
 $btnCase.onclick = () => {
   state.searchCaseSensitive = !state.searchCaseSensitive;
   renderSearchControls();
-  showToast(state.searchCaseSensitive ? '已开启区分大小写 (Aa)' : '已关闭区分大小写');
+  showToast(state.searchCaseSensitive ? t('toastCaseOn') : t('toastCaseOff'));
   if (hasActiveSearch()) {
     runSearch();
   }
@@ -1064,7 +1365,7 @@ $btnRegex.onclick = () => {
   state.searchRegex = !state.searchRegex;
   state.regexError = null;
   renderSearchControls();
-  showToast(state.searchRegex ? '已开启正则表达式查找 (.*)' : '已关闭正则表达式查找');
+  showToast(state.searchRegex ? t('toastRegexOn') : t('toastRegexOff'));
   if (hasActiveSearch()) {
     runSearch();
   } else {
@@ -1072,6 +1373,7 @@ $btnRegex.onclick = () => {
   }
 };
 
+renderStaticTexts();
 renderSearchControls();
 
 $btnPreviewClose.onclick = () => {
@@ -1081,11 +1383,11 @@ $btnPreviewClose.onclick = () => {
 };
 
 $btnPreviewCopyRel.onclick = () => {
-  if (state.previewItem) copyText(state.previewItem.relPath, '相对路径');
+  if (state.previewItem) copyText(state.previewItem.relPath, t('labelRelPath'));
 };
 
 $btnPreviewCopyAbs.onclick = () => {
-  if (state.previewItem) copyText(state.previewItem.absPath, '绝对路径');
+  if (state.previewItem) copyText(state.previewItem.absPath, t('labelAbsPath'));
 };
 
 $btnPreviewOpenNative.onclick = () => {
@@ -1130,13 +1432,16 @@ function applyHostStyling(ctx) {
 // Register MCP App handlers BEFORE connect()
 app.ontoolinput = () => {
   if (!state.initialized) {
-    setEmptyMessage($treeContainer, '正在加载工程目录...');
+    setEmptyMessage($treeContainer, t('loadingDirEmpty'));
   }
 };
 
 app.ontoolresult = (result) => {
   if (result?.structuredContent) {
     hydrateFromInitialData(result.structuredContent);
+    if (result.structuredContent.detectedBy !== 'arg') {
+      syncActiveWorkspace(true);
+    }
   }
 };
 
@@ -1146,22 +1451,37 @@ app.onhostcontextchanged = (ctx) => {
 
 window.addEventListener('error', (ev) => {
   if (!state.initialized && $treeContainer) {
-    setEmptyMessage($treeContainer, `脚本错误: ${ev.message || ev.error}`);
+    setEmptyMessage($treeContainer, t('scriptError', ev.message || ev.error));
   }
 });
 
 let syncingWorkspace = false;
-async function syncActiveWorkspace() {
+async function syncActiveWorkspace(forceInitialCheck = false) {
   if (!state.initialized || syncingWorkspace) return;
-  if (document.visibilityState === 'hidden') return;
+  if (!forceInitialCheck && document.visibilityState === 'hidden') return;
   syncingWorkspace = true;
   try {
     const info = await callTool('check_active_workspace', {});
     if (!info?.activeProject) return;
     const sig = Number(info.signalTime) || 0;
-    const baseline = Math.max(state.lastAutoSignalTime, state.manualOverrideAt);
-    if (sig > baseline) {
-      state.lastAutoSignalTime = sig;
+    const convChanged =
+      Boolean(info.activeConversationId) &&
+      info.activeConversationId !== state.lastAutoConversationId;
+    const shouldSwitch =
+      state.manualOverrideAt > 0
+        ? sig > state.manualOverrideAt && (sig > state.lastAutoSignalTime || convChanged)
+        : forceInitialCheck === true || convChanged || sig > state.lastAutoSignalTime;
+
+    if (shouldSwitch) {
+      if (sig > state.lastAutoSignalTime) {
+        state.lastAutoSignalTime = sig;
+      }
+      if (info.activeConversationId) {
+        state.lastAutoConversationId = info.activeConversationId;
+      }
+      if (state.manualOverrideAt > 0 && sig > state.manualOverrideAt) {
+        state.manualOverrideAt = 0;
+      }
       if (Array.isArray(info.projects) && info.projects.length > 0) {
         state.projects = info.projects;
       }
@@ -1187,11 +1507,11 @@ async function syncActiveWorkspace() {
     state.capabilities = app.getHostCapabilities() || {};
     applyHostStyling(app.getHostContext());
 
-    window.addEventListener('focus', syncActiveWorkspace);
+    window.addEventListener('focus', () => syncActiveWorkspace(false));
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') syncActiveWorkspace();
+      if (document.visibilityState === 'visible') syncActiveWorkspace(false);
     });
-    setInterval(syncActiveWorkspace, 2500);
+    setInterval(() => syncActiveWorkspace(false), 1500);
 
     // Fallback if opened directly without ontoolresult arriving immediately
     setTimeout(async () => {
@@ -1207,6 +1527,6 @@ async function syncActiveWorkspace() {
       }
     }, 500);
   } catch (err) {
-    setEmptyMessage($treeContainer, `连接宿主失败: ${err?.message || err}`);
+    setEmptyMessage($treeContainer, t('connectError', err?.message || err));
   }
 })();

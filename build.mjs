@@ -38,6 +38,8 @@ await esbuild.build({
   format: 'cjs',
   target: ['node20'],
   minify: true,
+  external: ['node:sqlite'],
+  logOverride: { 'empty-import-meta': 'silent' },
   outfile: path.join(__dirname, 'dist', 'server.cjs'),
 });
 

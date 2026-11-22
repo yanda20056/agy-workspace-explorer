@@ -1,11 +1,16 @@
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+
+const nativeRequire =
+  typeof require === 'function' ? require : createRequire(import.meta.url);
 
 const BASE_DIR =
   typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
@@ -16,8 +21,27 @@ const APP_HTML_PATH =
   (fsSync.existsSync(path.join(BASE_DIR, 'app.html'))
     ? path.join(BASE_DIR, 'app.html')
     : path.join(BASE_DIR, 'dist', 'app.html'));
-const PROJECTS_DIR = path.join(os.homedir(), '.gemini', 'config', 'projects');
-const HOOK_ACTIVE_FILE = path.join(os.homedir(), '.gemini', '.workspace-explorer-active.json');
+const GEMINI_DIR = path.join(os.homedir(), '.gemini');
+const PROJECTS_DIR = path.join(GEMINI_DIR, 'config', 'projects');
+const HOOK_ACTIVE_FILE = path.join(GEMINI_DIR, '.workspace-explorer-active.json');
+const AGY_UI_DIRS = ['antigravity', 'antigravity-ide'].map((d) => path.join(GEMINI_DIR, d));
+
+let sqliteMod = null;
+let sqliteLoaded = false;
+function getSqlite() {
+  if (!sqliteLoaded) {
+    sqliteLoaded = true;
+    try {
+      sqliteMod = nativeRequire('node:sqlite');
+    } catch {
+      sqliteMod = null;
+    }
+  }
+  return sqliteMod;
+}
+
+// Cache conversationId -> { rootPath, projectId }
+const convSummaryCache = new Map();
 
 // Parse --data-dir=...
 const dataDirArg = process.argv.find((a) => a.startsWith('--data-dir='));
@@ -166,6 +190,224 @@ async function readHookActiveWorkspace() {
   }
 }
 
+function parseRootFromUrisJson(workspaceUrisJson) {
+  if (!workspaceUrisJson || typeof workspaceUrisJson !== 'string') return null;
+  try {
+    const arr = JSON.parse(workspaceUrisJson);
+    if (!Array.isArray(arr)) return null;
+    for (const u of arr) {
+      const local = uriToLocalPath(u);
+      if (!local) continue;
+      const resolved = path.resolve(local);
+      try {
+        if (fsSync.statSync(resolved).isDirectory()) {
+          return resolved;
+        }
+      } catch {
+        // ignore missing directory
+      }
+    }
+  } catch {
+    // ignore malformed json
+  }
+  return null;
+}
+
+function resolveConversationWorkspace(agyDir, conversationId, hookActive) {
+  if (!conversationId) return null;
+  if (convSummaryCache.has(conversationId)) {
+    return convSummaryCache.get(conversationId);
+  }
+  if (hookActive?.conversationId === conversationId && hookActive?.rootPath) {
+    const res = { rootPath: hookActive.rootPath, projectId: null };
+    convSummaryCache.set(conversationId, res);
+    return res;
+  }
+
+  const sqlite = getSqlite();
+  const dbPath = path.join(agyDir, 'conversation_summaries.db');
+  if (sqlite?.DatabaseSync && fsSync.existsSync(dbPath)) {
+    let db;
+    try {
+      db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+      const stmt = db.prepare(
+        'SELECT workspace_uris, project_id, parent_conversation_id FROM conversation_summaries WHERE conversation_id = ?',
+      );
+      let row = stmt.get(conversationId);
+      let hops = 0;
+      while (
+        row &&
+        (!row.workspace_uris || row.workspace_uris === '[]') &&
+        !row.project_id &&
+        row.parent_conversation_id &&
+        hops < 3
+      ) {
+        row = stmt.get(row.parent_conversation_id);
+        hops++;
+      }
+      if (row) {
+        const rootPath = parseRootFromUrisJson(row.workspace_uris);
+        const projectId =
+          row.project_id && row.project_id !== 'default-cli-project' ? row.project_id : null;
+        if (rootPath) {
+          sessionAllowedRoots.set(normalizePathKey(rootPath), rootPath);
+        }
+        if (rootPath || projectId) {
+          const res = { rootPath, projectId };
+          convSummaryCache.set(conversationId, res);
+          return res;
+        }
+      }
+    } catch {
+      // ignore sqlite errors
+    } finally {
+      try {
+        db?.close();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // Fallback for Node runtimes without node:sqlite: scan agyhub_summaries_proto.pb
+  try {
+    const pbPath = path.join(agyDir, 'agyhub_summaries_proto.pb');
+    if (fsSync.existsSync(pbPath)) {
+      const str = fsSync.readFileSync(pbPath, 'utf8');
+      const idx = str.indexOf(conversationId);
+      if (idx !== -1) {
+        const after = str.slice(idx, idx + 450);
+        const matches = after.match(/file:\/\/\/[^\x00-\x1f"'\s\ufffd]+/g) || [];
+        for (const u of matches) {
+          const local = uriToLocalPath(u);
+          if (!local) continue;
+          const resolved = path.resolve(local);
+          try {
+            if (fsSync.statSync(resolved).isDirectory()) {
+              sessionAllowedRoots.set(normalizePathKey(resolved), resolved);
+              const res = { rootPath: resolved, projectId: null };
+              convSummaryCache.set(conversationId, res);
+              return res;
+            }
+          } catch {
+            // continue
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore fallback errors
+  }
+
+  return null;
+}
+
+/**
+ * Detect the conversation currently viewed or active in the Antigravity UI by reading
+ * annotations/<conversationId>.pbtxt (last_user_view_time) and conversation_summaries.db.
+ */
+async function readUiActiveConversation(hookActive) {
+  let best = null; // { conversationId, rootPath, projectId, signalTime }
+
+  for (const agyDir of AGY_UI_DIRS) {
+    const annDir = path.join(agyDir, 'annotations');
+    try {
+      const files = (await fs.readdir(annDir)).filter((f) => f.endsWith('.pbtxt'));
+      const stats = await Promise.all(
+        files.map(async (file) => {
+          try {
+            const full = path.join(annDir, file);
+            const st = await fs.stat(full);
+            return { file, full, mtimeMs: Math.round(st.mtimeMs || 0) };
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const topFiles = stats
+        .filter(Boolean)
+        .sort((a, b) => b.mtimeMs - a.mtimeMs)
+        .slice(0, 15);
+
+      for (const item of topFiles) {
+        try {
+          const raw = await fs.readFile(item.full, 'utf8');
+          const m = raw.match(
+            /last_user_view_time:\s*\{\s*seconds:\s*(\d+)(?:\s+nanos:\s*(\d+))?\s*\}/,
+          );
+          const viewTimeMs = m
+            ? Number(m[1]) * 1000 + Math.round(Number(m[2] || 0) / 1e6)
+            : item.mtimeMs;
+          if (best && viewTimeMs <= best.signalTime) continue;
+
+          const conversationId = item.file.replace(/\.pbtxt$/, '');
+          const resolved = resolveConversationWorkspace(agyDir, conversationId, hookActive);
+          if (resolved && (resolved.rootPath || resolved.projectId)) {
+            best = {
+              conversationId,
+              rootPath: resolved.rootPath,
+              projectId: resolved.projectId,
+              signalTime: viewTimeMs,
+            };
+          }
+        } catch {
+          // ignore unreadable annotation file
+        }
+      }
+    } catch {
+      // annotations dir missing
+    }
+
+    // Also check latest user input conversation in conversation_summaries.db
+    const sqlite = getSqlite();
+    const dbPath = path.join(agyDir, 'conversation_summaries.db');
+    if (sqlite?.DatabaseSync && fsSync.existsSync(dbPath)) {
+      let db;
+      try {
+        db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+        const row = db
+          .prepare(
+            `SELECT conversation_id, workspace_uris, project_id, last_user_input_time
+             FROM conversation_summaries
+             WHERE source != 'CORTEX_TRAJECTORY_SOURCE_CLI' AND nesting_depth = 0
+             ORDER BY last_user_input_time DESC
+             LIMIT 1`,
+          )
+          .get();
+        if (row) {
+          const inputMs = Date.parse(row.last_user_input_time || '') || 0;
+          if (!best || inputMs > best.signalTime) {
+            const rootPath = parseRootFromUrisJson(row.workspace_uris);
+            const projectId =
+              row.project_id && row.project_id !== 'default-cli-project' ? row.project_id : null;
+            if (rootPath) {
+              sessionAllowedRoots.set(normalizePathKey(rootPath), rootPath);
+            }
+            if (rootPath || projectId) {
+              best = {
+                conversationId: row.conversation_id,
+                rootPath,
+                projectId,
+                signalTime: inputMs,
+              };
+            }
+          }
+        }
+      } catch {
+        // ignore
+      } finally {
+        try {
+          db?.close();
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  return best;
+}
+
 // Serialized state persistence to prevent concurrent write races
 let stateWriteChain = Promise.resolve();
 
@@ -173,9 +415,11 @@ async function readState() {
   try {
     const raw = await fs.readFile(STATE_FILE, 'utf8');
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : { lastRootPath: null, recents: [] };
+    return parsed && typeof parsed === 'object'
+      ? parsed
+      : { lastRootPath: null, recents: [], lang: 'en' };
   } catch {
-    return { lastRootPath: null, recents: [] };
+    return { lastRootPath: null, recents: [], lang: 'en' };
   }
 }
 
@@ -252,7 +496,8 @@ async function detectClientRoots() {
 
 async function getAllowedProjectsMap() {
   const map = new Map(); // normalizedKey -> projectObj
-  await readHookActiveWorkspace();
+  const hookActive = await readHookActiveWorkspace();
+  await readUiActiveConversation(hookActive);
   const known = await loadAntigravityProjects();
   for (const p of known) {
     map.set(normalizePathKey(p.rootPath), p);
@@ -732,6 +977,7 @@ async function resolveContext(explicitRootPath, extra) {
     readHookActiveWorkspace(),
     readState(),
   ]);
+  const uiActive = await readUiActiveConversation(hookActive);
 
   const projects = [...knownProjects];
   const keySet = new Set(projects.map((p) => normalizePathKey(p.rootPath)));
@@ -757,6 +1003,7 @@ async function resolveContext(explicitRootPath, extra) {
   }
 
   let activeProject = null;
+  let activeConversationId = null;
   let detectedBy = 'all';
   let signalTime = 0;
 
@@ -797,8 +1044,39 @@ async function resolveContext(explicitRootPath, extra) {
     signalTime = Date.now();
   }
 
-  // 3. Compare live conversation hook vs most recently touched Project in Antigravity sidebar
+  // 3. Live Antigravity UI focused conversation (annotations/*.pbtxt + conversation_summaries.db)
+  //    compared with initial turn lifecycle hook (.workspace-explorer-active.json)
   if (!activeProject) {
+    let uiProj = null;
+    let uiTime = 0;
+    if (uiActive) {
+      if (uiActive.rootPath) {
+        const uk = normalizePathKey(uiActive.rootPath);
+        uiProj =
+          projects.find((p) => normalizePathKey(p.rootPath) === uk) ||
+          projects.find((p) => isSubPath(p.rootPath, uiActive.rootPath));
+      }
+      if (!uiProj && uiActive.projectId) {
+        uiProj = projects.find((p) => p.id === uiActive.projectId) || null;
+      }
+      if (!uiProj && uiActive.rootPath) {
+        const uk = normalizePathKey(uiActive.rootPath);
+        uiProj = {
+          id: `chat:${uk}`,
+          name: path.basename(uiActive.rootPath),
+          rootPath: uiActive.rootPath,
+          uri: localPathToUri(uiActive.rootPath),
+        };
+        if (!keySet.has(uk)) {
+          projects.unshift(uiProj);
+          keySet.add(uk);
+        }
+      }
+      if (uiProj) {
+        uiTime = uiActive.signalTime || 0;
+      }
+    }
+
     let hookProj = null;
     let hookTime = 0;
     if (hookActive?.rootPath) {
@@ -811,26 +1089,38 @@ async function resolveContext(explicitRootPath, extra) {
           rootPath: hookActive.rootPath,
           uri: localPathToUri(hookActive.rootPath),
         };
+      if (!keySet.has(hk)) {
+        projects.unshift(hookProj);
+        keySet.add(hk);
+      }
       hookTime = hookActive.updatedAt || 0;
     }
 
-    let recentSidebarProj = null;
-    let recentSidebarTime = 0;
-    for (const p of knownProjects) {
-      if ((p.lastSelectedAt || 0) > recentSidebarTime) {
-        recentSidebarTime = p.lastSelectedAt || 0;
-        recentSidebarProj = p;
-      }
-    }
-
-    if (hookProj && hookTime >= recentSidebarTime) {
+    if (uiProj && (!hookProj || uiTime >= hookTime)) {
+      activeProject = uiProj;
+      activeConversationId = uiActive.conversationId || null;
+      detectedBy = 'active-chat';
+      signalTime = uiTime;
+    } else if (hookProj) {
       activeProject = hookProj;
+      activeConversationId = hookActive.conversationId || null;
       detectedBy = 'active-chat';
       signalTime = hookTime;
-    } else if (recentSidebarProj) {
-      activeProject = recentSidebarProj;
-      detectedBy = 'selected-project';
-      signalTime = recentSidebarTime;
+    } else {
+      // Only fall back to most recently modified project config file when no active conversation is found
+      let recentSidebarProj = null;
+      let recentSidebarTime = 0;
+      for (const p of knownProjects) {
+        if ((p.lastSelectedAt || 0) > recentSidebarTime) {
+          recentSidebarTime = p.lastSelectedAt || 0;
+          recentSidebarProj = p;
+        }
+      }
+      if (recentSidebarProj) {
+        activeProject = recentSidebarProj;
+        detectedBy = 'selected-project';
+        signalTime = recentSidebarTime;
+      }
     }
   }
 
@@ -863,9 +1153,11 @@ async function resolveContext(explicitRootPath, extra) {
   return {
     projects,
     activeProject,
+    activeConversationId,
     viewMode,
     detectedBy,
     signalTime,
+    lang: state.lang === 'zh' ? 'zh' : 'en',
     recents: Array.isArray(state.recents) ? state.recents : [],
   };
 }
@@ -989,6 +1281,7 @@ mcp.registerTool(
       content: [{ type: 'text', text: ctx.activeProject?.name || 'none' }],
       structuredContent: {
         activeProject: ctx.activeProject,
+        activeConversationId: ctx.activeConversationId || null,
         detectedBy: ctx.detectedBy,
         signalTime: ctx.signalTime || 0,
         projects: ctx.projects,
@@ -1149,6 +1442,75 @@ mcp.registerTool(
     return {
       content: [{ type: 'text', text: resolved }],
       structuredContent: { lastRootPath: resolved },
+    };
+  },
+);
+
+mcp.registerTool(
+  'set_language',
+  {
+    title: 'Set Language',
+    description: 'Remember the UI language preference (en or zh).',
+    inputSchema: {
+      lang: z.enum(['en', 'zh']),
+    },
+    _meta: APP_ONLY_META,
+  },
+  async ({ lang }) => {
+    const normalized = lang === 'zh' ? 'zh' : 'en';
+    await updateState((prev) => ({ ...prev, lang: normalized }));
+    return {
+      content: [{ type: 'text', text: normalized }],
+      structuredContent: { lang: normalized },
+    };
+  },
+);
+
+mcp.registerTool(
+  'reveal_in_os',
+  {
+    title: 'Reveal in System File Explorer',
+    description: 'Open the OS file manager (Windows Explorer / macOS Finder / Linux file manager) and select the target file or folder.',
+    inputSchema: {
+      rootPath: z.string(),
+      relPath: z.string().optional(),
+    },
+    _meta: APP_ONLY_META,
+  },
+  async ({ rootPath, relPath = '' }) => {
+    const resolvedRoot = await assertAllowedRoot(rootPath);
+    const absPath = relPath ? path.resolve(resolvedRoot, relPath) : resolvedRoot;
+    if (!isSubPath(resolvedRoot, absPath)) {
+      throw new Error('Access denied: path escapes project root');
+    }
+    const st = await fs.stat(absPath);
+
+    if (process.platform === 'win32') {
+      const winPath = path.win32.normalize(absPath);
+      const child = spawn('explorer.exe', [`/select,"${winPath}"`], {
+        detached: true,
+        stdio: 'ignore',
+        windowsVerbatimArguments: true,
+      });
+      child.unref();
+    } else if (process.platform === 'darwin') {
+      const child = spawn('open', ['-R', absPath], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+    } else {
+      const targetDir = st.isDirectory() ? absPath : path.dirname(absPath);
+      const child = spawn('xdg-open', [targetDir], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+    }
+
+    return {
+      content: [{ type: 'text', text: absPath }],
+      structuredContent: { absPath },
     };
   },
 );

@@ -8,8 +8,8 @@
   "description": "Browse project folder trees, auto-follow active workspaces, open files in the side pane, search with fuzzy/regex/case modes, and copy paths.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
-    "打开当前工程的文件目录树",
-    "切换浏览另一个工程的文件结构",
-    "在文件树中查找并打开项目里的配置文件"
+    "Open the Workspace Explorer file tree for the current project",
+    "Browse and switch between different project directories",
+    "Find and open configuration files in the workspace tree"
   ]
 }

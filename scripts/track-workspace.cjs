@@ -15,9 +15,23 @@ process.stdin.on('data', (chunk) => {
 process.stdin.on('end', () => {
   try {
     const payload = raw ? JSON.parse(raw) : {};
+
+    // Ignore headless CLI invocations so background CLI jobs don't hijack the GUI active workspace
+    const tp = String(payload.transcriptPath || payload.artifactDirectoryPath || '');
+    if (tp.includes('antigravity-cli')) {
+      process.stdout.write('{}\n');
+      return;
+    }
+
+    // Only record on SessionStart or the first model invocation of a user turn (invocationNum <= 1),
+    // so multi-step tool-loop continuations in a background tab don't overwrite the user's focused tab.
+    const invNum = Number(payload.invocationNum);
+    const isInitialTurnStep =
+      payload.hookEventName === 'SessionStart' || !Number.isFinite(invNum) || invNum <= 1;
+
     const wsList = Array.isArray(payload.workspacePaths) ? payload.workspacePaths : [];
     const primary = wsList.find((p) => typeof p === 'string' && p.trim().length > 0);
-    if (primary) {
+    if (primary && isInitialTurnStep) {
       const dir = path.dirname(ACTIVE_FILE);
       fs.mkdirSync(dir, { recursive: true });
       const tmpFile = `${ACTIVE_FILE}.${process.pid}.tmp`;

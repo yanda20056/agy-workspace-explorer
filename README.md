@@ -35,7 +35,9 @@ agy plugin install https://github.com/yanda20056/agy-workspace-explorer
     - `.*` **正则表达式（Regular Expression）**：支持完整正则匹配文件名或相对路径，语法错误实时友好提示。
   - 搜索结果支持命中字符高亮，以及一键在目录树中逐级展开并滚动定位（瞄准镜图标）。
 - **快捷路径操作 & 右键菜单**：
-  - 悬停或右键点击任意文件/文件夹，支持一键**复制相对路径**（`./`）、**复制绝对路径**、**复制文件名**，或直接将路径附加到当前对话上下文。
+  - 悬停或右键点击任意文件/文件夹，支持**在系统文件窗口中打开并高亮选中**（Windows Explorer / macOS Finder）、一键**复制相对路径**（`./`）、**复制绝对路径**、**复制文件名**，或直接将路径附加到当前对话上下文。
+- **中英文双语切换（默认英文）**：
+  - 工程下拉菜单右侧内置 **`EN` / `中`** 语言切换按钮，默认显示英文界面，支持一键切换中英文并自动记住语言偏好。
 
 ### 本地二次开发
 
@@ -67,7 +69,8 @@ agy plugin install https://github.com/yanda20056/agy-workspace-explorer
 - **Side Pane & Full-Page Entrypoints**: Open directly from the auxiliary side pane (`+` -> **Workspace Explorer**) or from the left sidebar (**Workspace Explorer**).
 - **Native File Opening & Built-in Preview**: Click any file to open it in Antigravity's native side-pane file viewer (`com.google.antigravity/toggle-aux-pane`), with automatic fallback to a resizable line-numbered preview drawer.
 - **Fuzzy, Regex & Case-Sensitive Search**: Fast recursive search scoped to the current project (or across all projects) supporting fuzzy subsequence matching (`~`), case sensitivity (`Aa`), regular expressions (`.*`), match highlighting, and one-click reveal in tree.
-- **Quick Path Actions**: Copy relative path, copy full path, copy file name, or attach selected paths directly to your conversation context.
+- **Quick Path Actions & OS Reveal**: Reveal any file or folder directly in your system file manager (Windows Explorer / macOS Finder), copy relative path, copy full path, copy file name, or attach selected paths directly to your conversation context.
+- **Bilingual UI (`EN` / `中`, English by default)**: One-click language toggle button next to the project dropdown to switch between English and Chinese at any time, with persistent preference.
 
 ### Local Development
 
