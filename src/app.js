@@ -64,6 +64,12 @@ const I18N = {
     resizerTitle: 'Drag left/right to resize right file tree width',
     modeRenderBtn: 'Preview',
     modeRawBtn: 'Raw',
+    findInFileTitle: 'Find in File (Ctrl+F)',
+    findPlaceholder: 'Find in file (Enter / Shift+Enter)...',
+    findPrevTitle: 'Previous Match (Shift+Enter)',
+    findNextTitle: 'Next Match (Enter)',
+    findCloseTitle: 'Close Find Bar (Esc)',
+    findNoMatch: 'No results',
     wrapBtn: 'Wrap',
     wrapTitle: 'Toggle Word Wrap',
     copyContentBtn: 'Copy',
@@ -179,6 +185,12 @@ const I18N = {
     resizerTitle: '左右拖动调整右侧文件树宽度',
     modeRenderBtn: '预览',
     modeRawBtn: '源码',
+    findInFileTitle: '在文件内查找 (Ctrl+F)',
+    findPlaceholder: '在当前文件内查找 (Enter 下一处 / Shift+Enter 上一处)...',
+    findPrevTitle: '上一处匹配 (Shift+Enter)',
+    findNextTitle: '下一处匹配 (Enter)',
+    findCloseTitle: '关闭查找栏 (Esc)',
+    findNoMatch: '无结果',
     wrapBtn: '换行',
     wrapTitle: '切换自动换行',
     copyContentBtn: '复制全文',
@@ -301,6 +313,12 @@ const state = {
   previewData: null,
   previewRenderMode: 'render', // 'render' | 'raw'
   previewWrap: false,
+  findOpen: false,
+  findQuery: '',
+  findCaseSensitive: false,
+  findRegex: false,
+  findCurrentIdx: 0,
+  findTotal: 0,
   capabilities: {},
   initialized: false,
   lastAutoSignalTime: 0,
@@ -342,8 +360,17 @@ const $previewMeta = document.getElementById('previewMeta');
 const $previewModeTabs = document.getElementById('previewModeTabs');
 const $btnModeRender = document.getElementById('btnModeRender');
 const $btnModeRaw = document.getElementById('btnModeRaw');
+const $btnPreviewFind = document.getElementById('btnPreviewFind');
 const $btnPreviewWrap = document.getElementById('btnPreviewWrap');
 const $btnPreviewCopyContent = document.getElementById('btnPreviewCopyContent');
+const $findBar = document.getElementById('findBar');
+const $findInput = document.getElementById('findInput');
+const $btnFindCase = document.getElementById('btnFindCase');
+const $btnFindRegex = document.getElementById('btnFindRegex');
+const $findCount = document.getElementById('findCount');
+const $btnFindPrev = document.getElementById('btnFindPrev');
+const $btnFindNext = document.getElementById('btnFindNext');
+const $btnFindClose = document.getElementById('btnFindClose');
 const $previewBody = document.getElementById('previewBody');
 const $btnPreviewCopyRel = document.getElementById('btnPreviewCopyRel');
 const $btnPreviewCopyAbs = document.getElementById('btnPreviewCopyAbs');
@@ -376,6 +403,22 @@ function renderStaticTexts() {
   $previewResizer.title = t('resizerTitle');
   if ($btnModeRender) $btnModeRender.textContent = t('modeRenderBtn');
   if ($btnModeRaw) $btnModeRaw.textContent = t('modeRawBtn');
+  if ($btnPreviewFind) {
+    $btnPreviewFind.title = t('findInFileTitle');
+    $btnPreviewFind.classList.toggle('active', state.findOpen);
+  }
+  if ($findInput) $findInput.placeholder = t('findPlaceholder');
+  if ($btnFindCase) {
+    $btnFindCase.title = t('caseTitle');
+    $btnFindCase.classList.toggle('active', state.findCaseSensitive);
+  }
+  if ($btnFindRegex) {
+    $btnFindRegex.title = t('regexTitle');
+    $btnFindRegex.classList.toggle('active', state.findRegex);
+  }
+  if ($btnFindPrev) $btnFindPrev.title = t('findPrevTitle');
+  if ($btnFindNext) $btnFindNext.title = t('findNextTitle');
+  if ($btnFindClose) $btnFindClose.title = t('findCloseTitle');
   if ($btnPreviewWrap) {
     $btnPreviewWrap.textContent = t('wrapBtn');
     $btnPreviewWrap.title = t('wrapTitle');
@@ -997,6 +1040,7 @@ function renderPreviewHeaderControls() {
     $previewTitle.textContent = t('previewEmptyTitle');
     $previewMeta.textContent = '';
     $previewModeTabs.classList.remove('visible');
+    if ($btnPreviewFind) $btnPreviewFind.style.display = 'none';
     if ($btnPreviewWrap) $btnPreviewWrap.style.display = 'none';
     if ($btnPreviewCopyContent) $btnPreviewCopyContent.style.display = 'none';
     $btnPreviewCopyRel.style.display = 'none';
@@ -1018,7 +1062,14 @@ function renderPreviewHeaderControls() {
   const showingRawCode = !data?.isImage && (!isMarkdownExt(ext) || state.previewRenderMode === 'raw');
   const showingSvgRaw = data?.isImage && ext === 'svg' && state.previewRenderMode === 'raw';
   const showCodeTools = Boolean(data && !data.isBinary && (showingRawCode || showingSvgRaw));
+  const isSearchableContent = Boolean(
+    data && !data.isBinary && (!data.isImage || (ext === 'svg' && state.previewRenderMode === 'raw')),
+  );
 
+  if ($btnPreviewFind) {
+    $btnPreviewFind.style.display = isSearchableContent ? '' : 'none';
+    $btnPreviewFind.classList.toggle('active', state.findOpen);
+  }
   if ($btnPreviewWrap) {
     $btnPreviewWrap.style.display = showCodeTools ? '' : 'none';
     $btnPreviewWrap.classList.toggle('active', state.previewWrap);
@@ -1029,6 +1080,247 @@ function renderPreviewHeaderControls() {
   $btnPreviewCopyRel.style.display = '';
   $btnPreviewCopyAbs.style.display = '';
   $btnPreviewOpenNative.style.display = '';
+}
+
+// In-File Find (Ctrl+F) state & DOM highlighter
+let inFileMatchGroups = []; // Array<Array<HTMLElement>> where each element is the mark nodes for one match
+
+function clearInFileHighlights() {
+  inFileMatchGroups = [];
+  if (!$previewBody) return;
+  const marks = $previewBody.querySelectorAll('mark.find-hl');
+  if (marks.length === 0) return;
+  for (const m of marks) {
+    const parent = m.parentNode;
+    if (parent) {
+      parent.replaceChild(document.createTextNode(m.textContent || ''), m);
+    }
+  }
+  $previewBody.normalize();
+}
+
+function updateFindCountUI(regexErr = false) {
+  if (!$findCount || !$findInput) return;
+  $findInput.classList.toggle('invalid', Boolean(regexErr));
+  const q = state.findQuery;
+  if (!q) {
+    $findCount.textContent = '0 / 0';
+    $findCount.classList.remove('no-match');
+    return;
+  }
+  if (regexErr || inFileMatchGroups.length === 0) {
+    $findCount.textContent = t('findNoMatch');
+    $findCount.classList.add('no-match');
+    return;
+  }
+  $findCount.classList.remove('no-match');
+  $findCount.textContent = `${state.findCurrentIdx + 1} / ${inFileMatchGroups.length}`;
+}
+
+function highlightActiveInFileMatch(scrollIntoView = true) {
+  if (!$previewBody) return;
+  const prevMarks = $previewBody.querySelectorAll('mark.find-hl.current');
+  for (const m of prevMarks) {
+    m.classList.remove('current');
+  }
+  if (inFileMatchGroups.length === 0) {
+    updateFindCountUI(false);
+    return;
+  }
+  if (state.findCurrentIdx < 0 || state.findCurrentIdx >= inFileMatchGroups.length) {
+    state.findCurrentIdx = 0;
+  }
+  const activeGroup = inFileMatchGroups[state.findCurrentIdx];
+  if (activeGroup && activeGroup.length > 0) {
+    for (const m of activeGroup) {
+      m.classList.add('current');
+    }
+    if (scrollIntoView) {
+      activeGroup[0].scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+  }
+  updateFindCountUI(false);
+}
+
+function applyInFileFind(scrollToCurrent = true, resetIndex = true) {
+  clearInFileHighlights();
+  const q = state.findQuery;
+  if (!state.findOpen || !q || !$previewBody || !state.previewData || state.previewData.isBinary) {
+    updateFindCountUI(false);
+    return;
+  }
+
+  let re;
+  try {
+    const pattern = state.findRegex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    re = new RegExp(pattern, state.findCaseSensitive ? 'g' : 'gi');
+  } catch {
+    updateFindCountUI(true);
+    return;
+  }
+
+  // Group text nodes by their leaf block container (.code-lc, p, li, td, th, h1-h6, pre, blockquote)
+  const blockGroups = [];
+  let currentBlock = null;
+  let currentNodes = [];
+
+  const walker = document.createTreeWalker($previewBody, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+      const p = node.parentElement;
+      if (!p) return NodeFilter.FILTER_REJECT;
+      if (
+        p.closest('.code-ln') ||
+        p.closest('.unsupported-view') ||
+        p.closest('.empty-state') ||
+        p.closest('.img-view')
+      ) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+
+  let n;
+  while ((n = walker.nextNode())) {
+    const blk =
+      n.parentElement.closest('.code-lc, p, li, td, th, h1, h2, h3, h4, h5, h6, pre, blockquote') ||
+      $previewBody;
+    if (blk !== currentBlock) {
+      if (currentNodes.length > 0) {
+        blockGroups.push(currentNodes);
+      }
+      currentBlock = blk;
+      currentNodes = [n];
+    } else {
+      currentNodes.push(n);
+    }
+  }
+  if (currentNodes.length > 0) {
+    blockGroups.push(currentNodes);
+  }
+
+  const MAX_MATCHES = 2000;
+  let totalMatches = 0;
+
+  for (const nodes of blockGroups) {
+    if (totalMatches >= MAX_MATCHES) break;
+    const segments = [];
+    let fullText = '';
+    for (const textNode of nodes) {
+      const val = textNode.nodeValue || '';
+      const start = fullText.length;
+      fullText += val;
+      segments.push({ node: textNode, text: val, start, end: fullText.length });
+    }
+    if (!fullText) continue;
+
+    re.lastIndex = 0;
+    const ranges = [];
+    let m;
+    while ((m = re.exec(fullText)) !== null) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      const matchIdx = totalMatches++;
+      inFileMatchGroups.push([]);
+      ranges.push([m.index, m.index + m[0].length, matchIdx]);
+      if (totalMatches >= MAX_MATCHES) break;
+    }
+
+    if (ranges.length === 0) continue;
+
+    let rIdx = 0;
+    for (const seg of segments) {
+      while (rIdx < ranges.length && ranges[rIdx][1] <= seg.start) {
+        rIdx++;
+      }
+      if (rIdx >= ranges.length || ranges[rIdx][0] >= seg.end) {
+        continue;
+      }
+
+      const frag = document.createDocumentFragment();
+      let cursor = 0;
+      let k = rIdx;
+      while (k < ranges.length && ranges[k][0] < seg.end) {
+        const [rStart, rEnd, matchIdx] = ranges[k];
+        const localStart = Math.max(0, rStart - seg.start);
+        const localEnd = Math.min(seg.text.length, rEnd - seg.start);
+        if (localStart > cursor) {
+          frag.appendChild(document.createTextNode(seg.text.slice(cursor, localStart)));
+        }
+        if (localEnd > localStart) {
+          const mark = document.createElement('mark');
+          mark.className = 'find-hl';
+          mark.textContent = seg.text.slice(localStart, localEnd);
+          frag.appendChild(mark);
+          inFileMatchGroups[matchIdx].push(mark);
+        }
+        cursor = localEnd;
+        if (rEnd <= seg.end) {
+          k++;
+        } else {
+          break;
+        }
+      }
+      rIdx = k;
+      if (cursor < seg.text.length) {
+        frag.appendChild(document.createTextNode(seg.text.slice(cursor)));
+      }
+      if (seg.node.parentNode) {
+        seg.node.parentNode.replaceChild(frag, seg.node);
+      }
+    }
+  }
+
+  state.findTotal = inFileMatchGroups.length;
+  if (resetIndex || state.findCurrentIdx >= inFileMatchGroups.length) {
+    state.findCurrentIdx = 0;
+  }
+  highlightActiveInFileMatch(scrollToCurrent);
+}
+
+function stepInFileMatch(delta) {
+  if (inFileMatchGroups.length === 0) return;
+  state.findCurrentIdx =
+    (state.findCurrentIdx + delta + inFileMatchGroups.length) % inFileMatchGroups.length;
+  highlightActiveInFileMatch(true);
+}
+
+function openFindBar() {
+  if (!state.previewItem) return;
+  setPreviewSplitOpen(true);
+  state.findOpen = true;
+  if ($findBar) $findBar.classList.add('open');
+  if ($btnPreviewFind) $btnPreviewFind.classList.add('active');
+
+  // Pre-fill from selection inside previewBody if non-empty and single-line
+  try {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && $previewBody.contains(sel.anchorNode)) {
+      const selText = sel.toString().trim();
+      if (selText && !selText.includes('\n') && selText.length <= 120) {
+        state.findQuery = selText;
+        if ($findInput) $findInput.value = selText;
+      }
+    }
+  } catch {
+    // ignore selection errors
+  }
+
+  applyInFileFind(true, true);
+  if ($findInput) {
+    $findInput.focus();
+    $findInput.select();
+  }
+}
+
+function closeFindBar() {
+  state.findOpen = false;
+  if ($findBar) $findBar.classList.remove('open');
+  if ($btnPreviewFind) $btnPreviewFind.classList.remove('active');
+  clearInFileHighlights();
 }
 
 function renderPreviewContent() {
@@ -1111,6 +1403,9 @@ function renderPreviewContent() {
       renderMarkdownToHtml(data.content) +
       (data.truncated ? `<p style="color:var(--text-tertiary)">${escapeHtml(t('previewTruncated'))}</p>` : '');
     $previewBody.appendChild(mdDiv);
+    if (state.findOpen && state.findQuery) {
+      applyInFileFind(false, false);
+    }
     return;
   }
 
@@ -1148,6 +1443,9 @@ function renderPreviewContent() {
 
   codeWrap.appendChild(frag);
   $previewBody.appendChild(codeWrap);
+  if (state.findOpen && state.findQuery) {
+    applyInFileFind(false, false);
+  }
 }
 
 let lastNativeOpenKey = null;
@@ -2086,6 +2384,65 @@ if ($btnModeRaw) {
   };
 }
 
+if ($btnPreviewFind) {
+  $btnPreviewFind.onclick = () => {
+    if (state.findOpen) {
+      closeFindBar();
+    } else {
+      openFindBar();
+    }
+  };
+}
+
+if ($findInput) {
+  let findDebounce = null;
+  $findInput.oninput = (e) => {
+    state.findQuery = e.target.value;
+    clearTimeout(findDebounce);
+    findDebounce = setTimeout(() => applyInFileFind(true, true), 80);
+  };
+  $findInput.onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      stepInFileMatch(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeFindBar();
+    }
+  };
+}
+
+if ($btnFindCase) {
+  $btnFindCase.onclick = () => {
+    state.findCaseSensitive = !state.findCaseSensitive;
+    $btnFindCase.classList.toggle('active', state.findCaseSensitive);
+    applyInFileFind(true, false);
+    if ($findInput) $findInput.focus();
+  };
+}
+
+if ($btnFindRegex) {
+  $btnFindRegex.onclick = () => {
+    state.findRegex = !state.findRegex;
+    $btnFindRegex.classList.toggle('active', state.findRegex);
+    applyInFileFind(true, false);
+    if ($findInput) $findInput.focus();
+  };
+}
+
+if ($btnFindPrev) {
+  $btnFindPrev.onclick = () => stepInFileMatch(-1);
+}
+
+if ($btnFindNext) {
+  $btnFindNext.onclick = () => stepInFileMatch(1);
+}
+
+if ($btnFindClose) {
+  $btnFindClose.onclick = () => closeFindBar();
+}
+
 if ($btnPreviewWrap) {
   $btnPreviewWrap.onclick = () => {
     state.previewWrap = !state.previewWrap;
@@ -2152,8 +2509,18 @@ document.addEventListener('click', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+    if (state.previewItem && $mainSplit.classList.contains('preview-open')) {
+      e.preventDefault();
+      openFindBar();
+      return;
+    }
+  }
   if (e.key === 'Escape') {
     hideContextMenu();
+    if (state.findOpen) {
+      closeFindBar();
+    }
   }
 });
 

@@ -678,6 +678,93 @@
       background: var(--bg-primary);
     }
 
+    /* In-File Find Bar (Ctrl+F) */
+    .find-bar {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-primary);
+      flex-shrink: 0;
+    }
+
+    .find-bar.open {
+      display: flex;
+    }
+
+    .find-input-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      flex: 1;
+      max-width: 320px;
+      min-width: 120px;
+    }
+
+    .find-input {
+      width: 100%;
+      height: 25px;
+      padding: 0 54px 0 8px;
+      border-radius: 5px;
+      border: 1px solid var(--border-primary);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: var(--font-ui);
+      font-size: 12px;
+      outline: none;
+    }
+
+    .find-input:focus {
+      border-color: var(--accent);
+    }
+
+    .find-input.invalid {
+      border-color: var(--color-border-danger, #ef4444);
+    }
+
+    .find-opts {
+      position: absolute;
+      right: 3px;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .find-count {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      min-width: 48px;
+      text-align: center;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .find-count.no-match {
+      color: var(--color-text-danger, #ef4444);
+    }
+
+    .find-nav-btn {
+      width: 23px;
+      height: 23px;
+      font-size: 14px;
+    }
+
+    mark.find-hl {
+      background: rgba(234, 179, 8, 0.32);
+      color: inherit;
+      border-radius: 2px;
+      padding: 0;
+    }
+
+    mark.find-hl.current {
+      background: rgba(249, 115, 22, 0.85);
+      color: #ffffff;
+      outline: 1px solid #f97316;
+      border-radius: 2px;
+    }
+
     /* Code viewer table (+2px font size) */
     .code-view {
       font-family: var(--font-mono);
@@ -1077,6 +1164,12 @@
               <button id="btnModeRender" class="mode-tab active">Preview</button>
               <button id="btnModeRaw" class="mode-tab">Raw</button>
             </div>
+            <button id="btnPreviewFind" class="mini-btn" title="Find in File (Ctrl+F)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <path d="m21 21-4.3-4.3"></path>
+              </svg>
+            </button>
             <button id="btnPreviewWrap" class="mini-btn" title="Toggle Word Wrap">Wrap</button>
             <button id="btnPreviewCopyContent" class="mini-btn" title="Copy Content">Copy</button>
             <button id="btnPreviewCopyRel" class="mini-btn" title="Copy Relative Path">Rel</button>
@@ -1084,6 +1177,23 @@
             <button id="btnPreviewOpenNative" class="mini-btn" title="Open in AGY Native Tab">AGY Tab</button>
             <button id="btnPreviewClose" class="icon-btn" style="width:22px;height:22px" title="Close Viewer">&times;</button>
           </div>
+        </div>
+        <div id="findBar" class="find-bar">
+          <div class="find-input-wrap">
+            <input id="findInput" class="find-input" type="text" placeholder="Find in file (Enter / Shift+Enter)..." />
+            <div class="find-opts">
+              <button id="btnFindCase" class="search-opt-btn" title="Match Case">Aa</button>
+              <button id="btnFindRegex" class="search-opt-btn" title="Use Regular Expression">.*</button>
+            </div>
+          </div>
+          <span id="findCount" class="find-count">0 / 0</span>
+          <button id="btnFindPrev" class="icon-btn find-nav-btn" title="Previous Match (Shift+Enter)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+          </button>
+          <button id="btnFindNext" class="icon-btn find-nav-btn" title="Next Match (Enter)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button id="btnFindClose" class="icon-btn find-nav-btn" title="Close Find Bar (Esc)">&times;</button>
         </div>
         <div id="previewBody" class="preview-body"></div>
       </div>
