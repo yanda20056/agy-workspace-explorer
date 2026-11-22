@@ -520,17 +520,26 @@ async function getAllowedProjectsMap() {
   return map;
 }
 
+const verifiedRootCache = new Map(); // normalizedKey -> { rootPath, verifiedAt }
+const VERIFIED_ROOT_TTL_MS = 30_000;
+
 async function assertAllowedRoot(rootPath) {
   if (!rootPath || typeof rootPath !== 'string') {
     throw new Error('Missing rootPath');
   }
   const resolved = path.resolve(rootPath);
   const key = normalizePathKey(resolved);
+  const cached = verifiedRootCache.get(key);
+  if (cached && Date.now() - cached.verifiedAt < VERIFIED_ROOT_TTL_MS) {
+    return cached.rootPath;
+  }
   const allowed = await getAllowedProjectsMap();
   const matched = allowed.get(key);
   if (!matched) {
+    verifiedRootCache.delete(key);
     throw new Error(`Access denied: "${resolved}" is not a registered Antigravity project.`);
   }
+  verifiedRootCache.set(key, { rootPath: matched.rootPath, verifiedAt: Date.now() });
   return matched.rootPath;
 }
 
@@ -949,76 +958,241 @@ const KNOWN_BINARY_EXTS = new Set([
   'osgb',
 ]);
 
-async function readFilePreview(rootPath, relPath) {
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function makeFileVersion(stat) {
+  return `${stat.mtimeNs}:${stat.ctimeNs}:${stat.size}:${stat.ino}`;
+}
+
+function isTransientFsError(err) {
+  const code = err?.code;
+  return code === 'ENOENT' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
+}
+
+async function statFileBigInt(absPath, allowRetry) {
+  try {
+    return await fs.stat(absPath, { bigint: true });
+  } catch (err) {
+    if (allowRetry && isTransientFsError(err)) {
+      await sleep(120);
+      return await fs.stat(absPath, { bigint: true });
+    }
+    throw err;
+  }
+}
+
+async function readFileBytesSlice(absPath, maxBytes, allowRetry) {
+  const attempt = async () => {
+    const fd = await fs.open(absPath, 'r');
+    try {
+      const buf = Buffer.alloc(maxBytes);
+      const { bytesRead } = await fd.read(buf, 0, maxBytes, 0);
+      return buf.subarray(0, bytesRead);
+    } finally {
+      await fd.close();
+    }
+  };
+  try {
+    return await attempt();
+  } catch (err) {
+    if (allowRetry && isTransientFsError(err)) {
+      await sleep(120);
+      return await attempt();
+    }
+    throw err;
+  }
+}
+
+async function readFileFullBuffer(absPath, allowRetry) {
+  try {
+    return await fs.readFile(absPath);
+  } catch (err) {
+    if (allowRetry && isTransientFsError(err)) {
+      await sleep(120);
+      return await fs.readFile(absPath);
+    }
+    throw err;
+  }
+}
+
+async function readFilePreview(rootPath, relPath, { expectedVersion, silent = false } = {}) {
   const resolvedRoot = await assertAllowedRoot(rootPath);
   const absPath = path.resolve(resolvedRoot, relPath);
   if (!isSubPath(resolvedRoot, absPath)) {
     throw new Error('Access denied: path escapes project root');
   }
 
-  const stat = await fs.stat(absPath);
+  const name = path.basename(absPath);
+  const ext = path.extname(name).toLowerCase().replace(/^\./, '');
+  const normalizedRel = toPosixRel(resolvedRoot, absPath);
+  const fileUri = localPathToUri(absPath);
+  const hasExpected = typeof expectedVersion === 'string' && expectedVersion.length > 0;
+
+  let stat;
+  try {
+    stat = await statFileBigInt(absPath, hasExpected);
+  } catch (err) {
+    if (hasExpected) {
+      if (err?.code === 'ENOENT') {
+        if (expectedVersion === 'DELETED') {
+          return {
+            name,
+            relPath: normalizedRel,
+            absPath,
+            fileUri,
+            ext,
+            version: 'DELETED',
+            unchanged: true,
+            deleted: true,
+          };
+        }
+        return {
+          name,
+          relPath: normalizedRel,
+          absPath,
+          fileUri,
+          ext,
+          version: 'DELETED',
+          unchanged: false,
+          deleted: true,
+          errorCode: 'ENOENT',
+          error: 'File no longer exists',
+        };
+      }
+      if (err?.code === 'EBUSY' || err?.code === 'EPERM' || err?.code === 'EACCES') {
+        return {
+          name,
+          relPath: normalizedRel,
+          absPath,
+          fileUri,
+          ext,
+          version: expectedVersion,
+          unchanged: true,
+          deleted: false,
+        };
+      }
+    }
+    throw err;
+  }
+
   if (stat.isDirectory()) {
     throw new Error('Target is a directory');
   }
 
-  const name = path.basename(absPath);
-  const ext = path.extname(name).toLowerCase().replace(/^\./, '');
-  const normalizedRel = toPosixRel(resolvedRoot, absPath);
+  let version = makeFileVersion(stat);
+  let size = Number(stat.size);
+  let mtimeMs = Number(stat.mtimeNs / 1000000n);
+
+  if (hasExpected && version === expectedVersion) {
+    return {
+      name,
+      relPath: normalizedRel,
+      absPath,
+      fileUri,
+      ext,
+      size,
+      mtimeMs,
+      version,
+      unchanged: true,
+      deleted: false,
+    };
+  }
+
+  // Guard against transient 0-byte window during non-atomic truncate-then-write saves
+  if (hasExpected && size === 0 && expectedVersion !== 'DELETED' && !expectedVersion.includes(':0:')) {
+    await sleep(80);
+    try {
+      const nextStat = await fs.stat(absPath, { bigint: true });
+      if (!nextStat.isDirectory()) {
+        stat = nextStat;
+        version = makeFileVersion(stat);
+        size = Number(stat.size);
+        mtimeMs = Number(stat.mtimeNs / 1000000n);
+        if (version === expectedVersion) {
+          return {
+            name,
+            relPath: normalizedRel,
+            absPath,
+            fileUri,
+            ext,
+            size,
+            mtimeMs,
+            version,
+            unchanged: true,
+            deleted: false,
+          };
+        }
+      }
+    } catch {
+      // keep previous stat and fall through
+    }
+  }
+
   const imageMime = IMAGE_MIME_MAP[ext] || null;
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const MAX_TEXT_BYTES = 200 * 1024;
 
-  await addRecentFile({
-    name,
-    relPath: normalizedRel,
-    absPath,
-    rootPath: resolvedRoot,
-    fileUri: localPathToUri(absPath),
-    ext,
-  });
-
-  if (imageMime && stat.size <= MAX_IMAGE_BYTES) {
-    const buf = await fs.readFile(absPath);
-    const dataUrl = `data:${imageMime};base64,${buf.toString('base64')}`;
-    const isSvg = ext === 'svg';
-    return {
+  if (!silent) {
+    await addRecentFile({
       name,
       relPath: normalizedRel,
       absPath,
-      fileUri: localPathToUri(absPath),
+      rootPath: resolvedRoot,
+      fileUri,
       ext,
-      size: stat.size,
-      isImage: true,
-      mimeType: imageMime,
-      dataUrl,
-      isBinary: !isSvg,
-      truncated: false,
-      content: isSvg ? buf.toString('utf8') : '',
-    };
+    });
   }
 
-  if (KNOWN_BINARY_EXTS.has(ext) || (imageMime && stat.size > MAX_IMAGE_BYTES)) {
-    return {
-      name,
-      relPath: normalizedRel,
-      absPath,
-      fileUri: localPathToUri(absPath),
-      ext,
-      size: stat.size,
-      isImage: false,
-      isBinary: true,
-      truncated: false,
-      content: '',
-    };
-  }
-
-  const fd = await fs.open(absPath, 'r');
   try {
-    const len = Math.min(stat.size, MAX_TEXT_BYTES);
-    const buf = Buffer.alloc(len);
-    await fd.read(buf, 0, len, 0);
+    if (imageMime && size <= MAX_IMAGE_BYTES) {
+      const buf = await readFileFullBuffer(absPath, hasExpected);
+      const dataUrl = `data:${imageMime};base64,${buf.toString('base64')}`;
+      const isSvg = ext === 'svg';
+      return {
+        name,
+        relPath: normalizedRel,
+        absPath,
+        fileUri,
+        ext,
+        size,
+        mtimeMs,
+        version,
+        unchanged: false,
+        deleted: false,
+        isImage: true,
+        mimeType: imageMime,
+        dataUrl,
+        isBinary: !isSvg,
+        truncated: false,
+        content: isSvg ? buf.toString('utf8') : '',
+      };
+    }
 
-    const sampleLen = Math.min(len, 4096);
+    if (KNOWN_BINARY_EXTS.has(ext) || (imageMime && size > MAX_IMAGE_BYTES)) {
+      return {
+        name,
+        relPath: normalizedRel,
+        absPath,
+        fileUri,
+        ext,
+        size,
+        mtimeMs,
+        version,
+        unchanged: false,
+        deleted: false,
+        isImage: false,
+        isBinary: true,
+        truncated: false,
+        content: '',
+      };
+    }
+
+    const len = Math.min(size, MAX_TEXT_BYTES);
+    const buf = len > 0 ? await readFileBytesSlice(absPath, len, hasExpected) : Buffer.alloc(0);
+
+    const sampleLen = Math.min(buf.length, 4096);
     let isBinary = false;
     for (let i = 0; i < sampleLen; i++) {
       if (buf[i] === 0) {
@@ -1032,9 +1206,13 @@ async function readFilePreview(rootPath, relPath) {
         name,
         relPath: normalizedRel,
         absPath,
-        fileUri: localPathToUri(absPath),
+        fileUri,
         ext,
-        size: stat.size,
+        size,
+        mtimeMs,
+        version,
+        unchanged: false,
+        deleted: false,
         isImage: false,
         isBinary: true,
         truncated: false,
@@ -1046,16 +1224,32 @@ async function readFilePreview(rootPath, relPath) {
       name,
       relPath: normalizedRel,
       absPath,
-      fileUri: localPathToUri(absPath),
+      fileUri,
       ext,
-      size: stat.size,
+      size,
+      mtimeMs,
+      version,
+      unchanged: false,
+      deleted: false,
       isImage: false,
       isBinary: false,
-      truncated: stat.size > MAX_TEXT_BYTES,
+      truncated: size > MAX_TEXT_BYTES,
       content: buf.toString('utf8'),
     };
-  } finally {
-    await fd.close();
+  } catch (err) {
+    if (hasExpected && (err?.code === 'EBUSY' || err?.code === 'EPERM' || err?.code === 'EACCES')) {
+      return {
+        name,
+        relPath: normalizedRel,
+        absPath,
+        fileUri,
+        ext,
+        version: expectedVersion,
+        unchanged: true,
+        deleted: false,
+      };
+    }
+    throw err;
   }
 }
 
@@ -1519,15 +1713,17 @@ mcp.registerTool(
   'read_file_preview',
   {
     title: 'Read File Preview',
-    description: 'Read a text file preview inside an allowed project.',
+    description: 'Read a text or image file preview inside an allowed project, with optional conditional reload via expectedVersion.',
     inputSchema: {
       rootPath: z.string(),
       relPath: z.string(),
+      expectedVersion: z.string().optional(),
+      silent: z.boolean().optional(),
     },
     _meta: APP_ONLY_META,
   },
-  async ({ rootPath, relPath }) => {
-    const preview = await readFilePreview(rootPath, relPath);
+  async ({ rootPath, relPath, expectedVersion, silent }) => {
+    const preview = await readFilePreview(rootPath, relPath, { expectedVersion, silent });
     return {
       content: [{ type: 'text', text: preview.name }],
       structuredContent: preview,

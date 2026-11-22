@@ -177,6 +177,7 @@ const I18N = {
     binaryNotSupported: 'Binary file is not supported',
     previewBinary: (kb) => `[Binary file, size ${kb} KB, text preview not supported]`,
     previewTruncated: '\n\n... [File exceeds 200KB, output truncated]',
+    previewDeleted: (name) => `File was deleted or moved: ${name}`,
     previewReadError: (msg) => `Failed to read file: ${msg}`,
     scriptError: (msg) => `Script error: ${msg}`,
     connectError: (msg) => `Failed to connect to host: ${msg}`,
@@ -304,6 +305,7 @@ const I18N = {
     binaryNotSupported: '不支持直接预览此二进制文件',
     previewBinary: (kb) => `[二进制文件，大小 ${kb} KB，不支持文本预览]`,
     previewTruncated: '\n\n... [文件超过 200KB，已截断显示]',
+    previewDeleted: (name) => `文件已被删除或移动: ${name}`,
     previewReadError: (msg) => `无法读取文件: ${msg}`,
     scriptError: (msg) => `脚本错误: ${msg}`,
     connectError: (msg) => `连接宿主失败: ${msg}`,
@@ -589,13 +591,20 @@ function createChevron(isOpen, isSpacer = false) {
   return span;
 }
 
+let inFlightToolCalls = 0;
+
 async function callTool(name, args = {}) {
-  const res = await app.callServerTool({ name, arguments: args });
-  if (res?.isError) {
-    const errText = res?.content?.[0]?.text || 'Tool error';
-    throw new Error(errText);
+  inFlightToolCalls++;
+  try {
+    const res = await app.callServerTool({ name, arguments: args });
+    if (res?.isError) {
+      const errText = res?.content?.[0]?.text || 'Tool error';
+      throw new Error(errText);
+    }
+    return res?.structuredContent;
+  } finally {
+    inFlightToolCalls = Math.max(0, inFlightToolCalls - 1);
   }
-  return res?.structuredContent;
 }
 
 async function ensureDirLoaded(rootPath, relPath = '', force = false, silentRender = false) {
@@ -965,6 +974,7 @@ function saveActiveTabScroll() {
   const curr = getActiveTab();
   if (curr && $previewBody) {
     curr.scrollTop = $previewBody.scrollTop;
+    curr.scrollLeft = $previewBody.scrollLeft;
   }
 }
 
@@ -1013,6 +1023,8 @@ function renderPreviewTabs() {
     tabEl.onclick = () => {
       if (state.activeTabKey !== tab.key) {
         activatePreviewTab(tab.key);
+      } else {
+        syncTabFile(tab, { silent: true });
       }
     };
 
@@ -1050,7 +1062,11 @@ function activatePreviewTab(tabKey) {
   if (tab && $previewBody) {
     requestAnimationFrame(() => {
       $previewBody.scrollTop = tab.scrollTop || 0;
+      $previewBody.scrollLeft = tab.scrollLeft || 0;
     });
+  }
+  if (tab && !tab.loading) {
+    syncTabFile(tab, { silent: true });
   }
 }
 
@@ -1080,10 +1096,16 @@ function closePreviewTab(tabKey) {
   }
   renderPreviewContent();
   const activeTab = getActiveTab();
-  if (wasActive && activeTab && $previewBody) {
-    requestAnimationFrame(() => {
-      $previewBody.scrollTop = activeTab.scrollTop || 0;
-    });
+  if (wasActive && activeTab) {
+    if ($previewBody) {
+      requestAnimationFrame(() => {
+        $previewBody.scrollTop = activeTab.scrollTop || 0;
+        $previewBody.scrollLeft = activeTab.scrollLeft || 0;
+      });
+    }
+    if (!activeTab.loading) {
+      syncTabFile(activeTab, { silent: true });
+    }
   }
 }
 
@@ -1108,17 +1130,18 @@ function renderPreviewHeaderControls() {
   $previewTitle.title = item.absPath || item.relPath || item.name;
   $previewMeta.textContent = data?.size !== undefined ? formatFileSize(data.size) : '';
 
+  const hasValidData = Boolean(data && !data.error && !data.deleted);
   const ext = (data?.ext || item.ext || '').toLowerCase();
-  const hasRenderTab = isMarkdownExt(ext) || (data?.isImage && ext === 'svg');
+  const hasRenderTab = hasValidData && (isMarkdownExt(ext) || (data.isImage && ext === 'svg'));
   $previewModeTabs.classList.toggle('visible', Boolean(hasRenderTab));
   if ($btnModeRender) $btnModeRender.classList.toggle('active', state.previewRenderMode === 'render');
   if ($btnModeRaw) $btnModeRaw.classList.toggle('active', state.previewRenderMode === 'raw');
 
   const showingRawCode = !data?.isImage && (!isMarkdownExt(ext) || state.previewRenderMode === 'raw');
   const showingSvgRaw = data?.isImage && ext === 'svg' && state.previewRenderMode === 'raw';
-  const showCodeTools = Boolean(data && !data.isBinary && (showingRawCode || showingSvgRaw));
+  const showCodeTools = Boolean(hasValidData && !data.isBinary && (showingRawCode || showingSvgRaw));
   const isSearchableContent = Boolean(
-    data && !data.isBinary && (!data.isImage || (ext === 'svg' && state.previewRenderMode === 'raw')),
+    hasValidData && !data.isBinary && (!data.isImage || (ext === 'svg' && state.previewRenderMode === 'raw')),
   );
 
   if ($btnPreviewFind) {
@@ -1381,21 +1404,31 @@ function closeFindBar() {
 function renderPreviewContent() {
   syncActiveTabToState();
   renderPreviewHeaderControls();
+  inFileMatchGroups = [];
   $previewBody.innerHTML = '';
 
   if (!state.previewItem) {
     setEmptyMessage($previewBody, t('previewEmptyHint'));
+    if (state.findOpen) updateFindCountUI(false);
     return;
   }
 
   const data = state.previewData;
   if (!data) {
     setEmptyMessage($previewBody, t('previewLoading'));
+    if (state.findOpen) updateFindCountUI(false);
+    return;
+  }
+
+  if (data.deleted) {
+    setEmptyMessage($previewBody, t('previewDeleted', state.previewItem.name));
+    if (state.findOpen) updateFindCountUI(false);
     return;
   }
 
   if (data.error) {
     setEmptyMessage($previewBody, t('previewReadError', data.error));
+    if (state.findOpen) updateFindCountUI(false);
     return;
   }
 
@@ -1422,6 +1455,7 @@ function renderPreviewContent() {
     wrap.appendChild(frame);
     wrap.appendChild(cap);
     $previewBody.appendChild(wrap);
+    if (state.findOpen) updateFindCountUI(false);
     return;
   }
 
@@ -1447,6 +1481,7 @@ function renderPreviewContent() {
     box.appendChild(txt);
     box.appendChild(btn);
     $previewBody.appendChild(box);
+    if (state.findOpen) updateFindCountUI(false);
     return;
   }
 
@@ -1542,19 +1577,145 @@ async function openFileInNativePane(item, rootPath) {
   }
 }
 
+let previewUpdateFlashTimer = null;
+function flashPreviewUpdated() {
+  if (!$previewMeta) return;
+  $previewMeta.classList.add('updated');
+  clearTimeout(previewUpdateFlashTimer);
+  previewUpdateFlashTimer = setTimeout(() => {
+    $previewMeta.classList.remove('updated');
+  }, 700);
+}
+
+function hasPreviewDataChanged(prev, next) {
+  if (!prev || !next) return true;
+  return (
+    Boolean(prev.deleted) !== Boolean(next.deleted) ||
+    Boolean(prev.error) !== Boolean(next.error) ||
+    prev.error !== next.error ||
+    Boolean(prev.isImage) !== Boolean(next.isImage) ||
+    Boolean(prev.isBinary) !== Boolean(next.isBinary) ||
+    Boolean(prev.truncated) !== Boolean(next.truncated) ||
+    prev.content !== next.content ||
+    prev.dataUrl !== next.dataUrl ||
+    prev.ext !== next.ext
+  );
+}
+
+async function syncTabFile(tab, { force = false, silent = true, showLoading = false } = {}) {
+  if (!tab) return false;
+  if (tab.syncing && !force) return false;
+
+  const tabKey = tab.key;
+  const reqSeq = ++tab.fetchSeq;
+  tab.syncing = true;
+
+  if (showLoading) {
+    tab.loading = true;
+    if (state.activeTabKey === tabKey) {
+      renderPreviewContent();
+    }
+  }
+
+  try {
+    const prevData = tab.data;
+    const args = {
+      rootPath: tab.rootPath,
+      relPath: tab.item.relPath,
+      silent: Boolean(silent),
+    };
+    if (!force && prevData?.version) {
+      args.expectedVersion = prevData.version;
+    }
+
+    const nextData = await callTool('read_file_preview', args);
+
+    if (!state.openTabs.includes(tab) || reqSeq !== tab.fetchSeq) {
+      return false;
+    }
+
+    tab.loading = false;
+
+    if (nextData?.unchanged) {
+      if (prevData) {
+        if (nextData.version) prevData.version = nextData.version;
+        if (nextData.size !== undefined) prevData.size = nextData.size;
+        if (nextData.mtimeMs !== undefined) prevData.mtimeMs = nextData.mtimeMs;
+      }
+      return false;
+    }
+
+    const isStillActive =
+      state.activeTabKey === tabKey && $mainSplit.classList.contains('preview-open');
+    const changedDisplay = !prevData || hasPreviewDataChanged(prevData, nextData);
+    const shouldPreserveScroll = Boolean(prevData && !prevData.error && !prevData.deleted);
+
+    let prevScrollTop = 0;
+    let prevScrollLeft = 0;
+    if (isStillActive && shouldPreserveScroll && $previewBody) {
+      prevScrollTop = $previewBody.scrollTop;
+      prevScrollLeft = $previewBody.scrollLeft;
+    }
+
+    tab.data = nextData;
+
+    if (isStillActive) {
+      if (changedDisplay) {
+        renderPreviewContent();
+        if (shouldPreserveScroll && $previewBody) {
+          $previewBody.scrollTop = prevScrollTop;
+          $previewBody.scrollLeft = prevScrollLeft;
+          tab.scrollTop = $previewBody.scrollTop;
+          tab.scrollLeft = $previewBody.scrollLeft;
+        }
+        if (prevData) {
+          flashPreviewUpdated();
+        }
+      } else {
+        syncActiveTabToState();
+        renderPreviewHeaderControls();
+      }
+    } else {
+      renderPreviewTabs();
+    }
+    return changedDisplay;
+  } catch (err) {
+    if (!state.openTabs.includes(tab) || reqSeq !== tab.fetchSeq) {
+      return false;
+    }
+    tab.loading = false;
+    if (!silent || !tab.data) {
+      tab.data = { error: err.message };
+      if (state.activeTabKey === tabKey) {
+        renderPreviewContent();
+      } else {
+        renderPreviewTabs();
+      }
+    }
+    return false;
+  } finally {
+    if (reqSeq === tab.fetchSeq) {
+      tab.syncing = false;
+    }
+  }
+}
+
 async function openFileInlinePreview(item, rootPath, forceReload = false) {
   const tabKey = makeDirKey(rootPath, item.relPath);
   let tab = state.openTabs.find((t) => t.key === tabKey);
 
   setPreviewSplitOpen(true);
 
-  // If already open and loaded (or currently loading) and not forcing a reload,
-  // simply switch to the existing tab without re-fetching or re-rendering!
-  if (tab && !forceReload && (tab.loading || (tab.data && !tab.data.error))) {
+  if (tab && !forceReload && (tab.loading || (tab.data && !tab.data.error && !tab.data.deleted))) {
     if (state.activeTabKey !== tabKey) {
       activatePreviewTab(tabKey);
-    } else if (state.autoReveal) {
-      syncAutoRevealInTree(rootPath, item.relPath);
+    } else {
+      if (state.autoReveal) {
+        syncAutoRevealInTree(rootPath, item.relPath);
+      }
+      if (!tab.loading) {
+        syncTabFile(tab, { force: false, silent: true, showLoading: false });
+      }
     }
     return;
   }
@@ -1569,13 +1730,13 @@ async function openFileInlinePreview(item, rootPath, forceReload = false) {
       item: { ...item, rootPath },
       data: null,
       loading: true,
+      syncing: false,
+      fetchSeq: 0,
       renderMode: isMarkdownExt(ext) || ext === 'svg' ? 'render' : 'raw',
       scrollTop: 0,
+      scrollLeft: 0,
     };
     state.openTabs.push(tab);
-  } else {
-    tab.loading = true;
-    tab.data = null;
   }
 
   state.activeTabKey = tabKey;
@@ -1583,29 +1744,11 @@ async function openFileInlinePreview(item, rootPath, forceReload = false) {
   if (state.autoReveal) {
     syncAutoRevealInTree(rootPath, item.relPath);
   }
-  renderPreviewContent();
-
-  try {
-    const data = await callTool('read_file_preview', {
-      rootPath,
-      relPath: item.relPath,
-    });
-    tab.data = data;
-    tab.loading = false;
-    if (state.activeTabKey === tabKey) {
-      renderPreviewContent();
-    } else {
-      renderPreviewTabs();
-    }
-  } catch (err) {
-    tab.data = { error: err.message };
-    tab.loading = false;
-    if (state.activeTabKey === tabKey) {
-      renderPreviewContent();
-    } else {
-      renderPreviewTabs();
-    }
-  }
+  await syncTabFile(tab, {
+    force: true,
+    silent: false,
+    showLoading: !tab.data,
+  });
 }
 
 async function handleFileClick(item, rootPath) {
@@ -2651,6 +2794,7 @@ let syncingWorkspace = false;
 async function syncActiveWorkspace(forceInitialCheck = false) {
   if (!state.initialized || syncingWorkspace) return;
   if (!forceInitialCheck && document.visibilityState === 'hidden') return;
+  if (!forceInitialCheck && inFlightToolCalls >= 2) return;
   syncingWorkspace = true;
   try {
     const info = await callTool('check_active_workspace', {});
@@ -2693,17 +2837,34 @@ async function syncActiveWorkspace(forceInitialCheck = false) {
   }
 }
 
+async function syncActiveOpenFile(immediate = false) {
+  if (!state.initialized) return;
+  if (!immediate && document.visibilityState === 'hidden') return;
+  if (!$mainSplit.classList.contains('preview-open')) return;
+  if (!immediate && inFlightToolCalls >= 2) return;
+  const tab = getActiveTab();
+  if (!tab || tab.loading || tab.syncing) return;
+  await syncTabFile(tab, { force: false, silent: true, showLoading: false });
+}
+
 (async () => {
   try {
     await app.connect();
     state.capabilities = app.getHostCapabilities() || {};
     applyHostStyling(app.getHostContext());
 
-    window.addEventListener('focus', () => syncActiveWorkspace(false));
+    window.addEventListener('focus', () => {
+      syncActiveWorkspace(false);
+      syncActiveOpenFile(true);
+    });
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') syncActiveWorkspace(false);
+      if (document.visibilityState === 'visible') {
+        syncActiveWorkspace(false);
+        syncActiveOpenFile(true);
+      }
     });
     setInterval(() => syncActiveWorkspace(false), 1500);
+    setInterval(() => syncActiveOpenFile(false), 800);
 
     // Fallback if opened directly without ontoolresult arriving immediately
     setTimeout(async () => {
