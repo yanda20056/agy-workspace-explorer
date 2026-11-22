@@ -1266,6 +1266,7 @@ async function resolveContext(explicitRootPath, extra) {
     signalTime,
     lang: state.lang === 'zh' ? 'zh' : 'en',
     openMode: state.openMode === 'native' ? 'native' : 'split',
+    autoReveal: state.autoReveal !== false,
     recents: Array.isArray(state.recents) ? state.recents : [],
   };
 }
@@ -1558,24 +1559,27 @@ mcp.registerTool(
   'set_language',
   {
     title: 'Set Language and UI Preferences',
-    description: 'Remember the UI language (en or zh) and file open mode (split or native).',
+    description: 'Remember the UI language (en or zh), file open mode (split or native), and auto-reveal in tree.',
     inputSchema: {
       lang: z.enum(['en', 'zh']).optional(),
       openMode: z.enum(['split', 'native']).optional(),
+      autoReveal: z.boolean().optional(),
     },
     _meta: APP_ONLY_META,
   },
-  async ({ lang, openMode }) => {
+  async ({ lang, openMode, autoReveal }) => {
     const next = await updateState((prev) => ({
       ...prev,
       ...(lang ? { lang: lang === 'zh' ? 'zh' : 'en' } : {}),
       ...(openMode ? { openMode: openMode === 'native' ? 'native' : 'split' } : {}),
+      ...(typeof autoReveal === 'boolean' ? { autoReveal } : {}),
     }));
     return {
       content: [{ type: 'text', text: `${next?.lang || 'en'}:${next?.openMode || 'split'}` }],
       structuredContent: {
         lang: next?.lang || 'en',
         openMode: next?.openMode || 'split',
+        autoReveal: next?.autoReveal !== false,
       },
     };
   },

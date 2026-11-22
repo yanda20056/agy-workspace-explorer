@@ -42,6 +42,17 @@ function detectInitialOpenMode() {
   return 'split';
 }
 
+function detectInitialAutoReveal() {
+  try {
+    const saved = window.localStorage?.getItem('workspace_explorer_auto_reveal');
+    if (saved === 'false') return false;
+    if (saved === 'true') return true;
+  } catch {
+    // ignore storage restriction
+  }
+  return true;
+}
+
 const I18N = {
   en: {
     switchProjectTitle: 'Switch Project',
@@ -53,6 +64,12 @@ const I18N = {
       'File click mode: Built-in Left Viewer + Right Docked Tree (Click to switch to AGY Native Tab)',
     openModeNativeTitle:
       'File click mode: AGY Native Tab (Click to switch to Built-in Left Viewer + Right Docked Tree)',
+    autoRevealOnTitle:
+      'Auto-Reveal Active File in Tree: ON (like Rider / VS Code) → Click to disable',
+    autoRevealOffTitle:
+      'Auto-Reveal Active File in Tree: OFF → Click to enable',
+    toastAutoRevealOn: 'Auto-Reveal in Tree: ON',
+    toastAutoRevealOff: 'Auto-Reveal in Tree: OFF',
     allModeTitle: 'Toggle: All Projects / Current Project View',
     collapseAllTitle: 'Collapse All',
     toggleHiddenTitle: 'Show/Hide Dotfiles (starting with .)',
@@ -174,6 +191,12 @@ const I18N = {
       '点击文件模式: 内置左侧查看器 + 右侧常驻目录树 (点击切换为 AGY 原生标签页)',
     openModeNativeTitle:
       '点击文件模式: AGY 原生标签页 (点击切换为内置左侧查看器 + 右侧常驻目录树)',
+    autoRevealOnTitle:
+      '自动在目录树中定位当前打开文件: 已开启 (类似 Rider / VS Code) → 点击关闭',
+    autoRevealOffTitle:
+      '自动在目录树中定位当前打开文件: 已关闭 → 点击开启',
+    toastAutoRevealOn: '已开启：在目录树中自动定位当前文件',
+    toastAutoRevealOff: '已关闭：在目录树中自动定位当前文件',
     allModeTitle: '切换：全部工程视图 / 当前工程视图',
     collapseAllTitle: '全部折叠',
     toggleHiddenTitle: '显示/隐藏以 . 开头的隐藏文件',
@@ -290,6 +313,7 @@ const I18N = {
 const state = {
   lang: detectInitialLang(), // 'en' (default) | 'zh'
   openMode: detectInitialOpenMode(), // 'split' (default: built-in left viewer + right tree) | 'native'
+  autoReveal: detectInitialAutoReveal(), // true (default: auto-reveal active file in tree) | false
   projects: [],
   activeProject: null,
   viewMode: 'all', // 'single' | 'all'
@@ -338,6 +362,7 @@ let previewSeq = 0;
 // DOM elements
 const $projectSelect = document.getElementById('projectSelect');
 const $btnOpenMode = document.getElementById('btnOpenMode');
+const $btnAutoReveal = document.getElementById('btnAutoReveal');
 const $btnLang = document.getElementById('btnLang');
 const $btnAllMode = document.getElementById('btnAllMode');
 const $btnCollapseAll = document.getElementById('btnCollapseAll');
@@ -387,6 +412,10 @@ function renderStaticTexts() {
     $btnOpenMode.textContent = isSplit ? t('openModeSplitText') : t('openModeNativeText');
     $btnOpenMode.title = isSplit ? t('openModeSplitTitle') : t('openModeNativeTitle');
     $btnOpenMode.classList.toggle('active', isSplit);
+  }
+  if ($btnAutoReveal) {
+    $btnAutoReveal.title = state.autoReveal ? t('autoRevealOnTitle') : t('autoRevealOffTitle');
+    $btnAutoReveal.classList.toggle('active', Boolean(state.autoReveal));
   }
   if ($btnLang) {
     $btnLang.textContent = t('langBtnText');
@@ -633,16 +662,20 @@ async function reloadVisibleDirs() {
   renderTree();
 }
 
-async function revealInTree(rootPath, relPath, isDir) {
+async function revealInTree(rootPath, relPath, isDir, options = {}) {
+  const { smartScroll = false } = options;
+
   // Clear search mode so tree is visible
-  searchSeq++;
-  state.searchQuery = '';
-  state.regexError = null;
-  state.searching = false;
-  $searchInput.value = '';
-  $searchClear.classList.remove('visible');
-  state.searchResults = null;
-  renderSearchControls();
+  if (hasActiveSearch() || state.searchQuery) {
+    searchSeq++;
+    state.searchQuery = '';
+    state.regexError = null;
+    state.searching = false;
+    $searchInput.value = '';
+    $searchClear.classList.remove('visible');
+    state.searchResults = null;
+    renderSearchControls();
+  }
 
   if (state.viewMode === 'all') {
     state.expandedProjects.add(rootPath);
@@ -666,18 +699,36 @@ async function revealInTree(rootPath, relPath, isDir) {
   state.selectedKey = makeDirKey(rootPath, relPath);
   renderHeader();
 
-  await runWithConcurrency(
-    dirsToOpen.map((rel) => () => ensureDirLoaded(rootPath, rel, false, true)),
-    3,
-  );
+  const missingDirs = dirsToOpen.filter((rel) => !state.dirCache.has(makeDirKey(rootPath, rel)));
+  if (missingDirs.length > 0) {
+    await runWithConcurrency(
+      missingDirs.map((rel) => () => ensureDirLoaded(rootPath, rel, false, true)),
+      3,
+    );
+  }
   renderTree();
 
   requestAnimationFrame(() => {
     const selectedEl = $treeContainer.querySelector('.tree-row.selected');
-    if (selectedEl) {
+    if (!selectedEl) return;
+    if (smartScroll) {
+      const containerRect = $treeContainer.getBoundingClientRect();
+      const rowRect = selectedEl.getBoundingClientRect();
+      const isVisible =
+        rowRect.top >= containerRect.top + 4 &&
+        rowRect.bottom <= containerRect.bottom - 4;
+      if (!isVisible) {
+        selectedEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+    } else {
       selectedEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
     }
   });
+}
+
+async function syncAutoRevealInTree(rootPath, relPath) {
+  if (!state.autoReveal || !rootPath || relPath === undefined || relPath === null) return;
+  await revealInTree(rootPath, relPath, false, { smartScroll: true });
 }
 
 function escapeHtml(str) {
@@ -989,10 +1040,11 @@ function activatePreviewTab(tabKey) {
   saveActiveTabScroll();
   state.activeTabKey = tabKey;
   syncActiveTabToState();
-  if (state.previewItem) {
-    state.selectedKey = tabKey;
+  if (state.autoReveal && state.previewItem) {
+    syncAutoRevealInTree(state.previewItem.rootPath, state.previewItem.relPath);
+  } else {
+    renderTree();
   }
-  renderTree();
   renderPreviewContent();
   const tab = getActiveTab();
   if (tab && $previewBody) {
@@ -1020,8 +1072,11 @@ function closePreviewTab(tabKey) {
     const nextIdx = Math.min(idx, state.openTabs.length - 1);
     state.activeTabKey = state.openTabs[nextIdx].key;
     syncActiveTabToState();
-    state.selectedKey = state.activeTabKey;
-    renderTree();
+    if (state.autoReveal && state.previewItem) {
+      syncAutoRevealInTree(state.previewItem.rootPath, state.previewItem.relPath);
+    } else {
+      renderTree();
+    }
   }
   renderPreviewContent();
   const activeTab = getActiveTab();
@@ -1498,6 +1553,8 @@ async function openFileInlinePreview(item, rootPath, forceReload = false) {
   if (tab && !forceReload && (tab.loading || (tab.data && !tab.data.error))) {
     if (state.activeTabKey !== tabKey) {
       activatePreviewTab(tabKey);
+    } else if (state.autoReveal) {
+      syncAutoRevealInTree(rootPath, item.relPath);
     }
     return;
   }
@@ -1523,6 +1580,9 @@ async function openFileInlinePreview(item, rootPath, forceReload = false) {
 
   state.activeTabKey = tabKey;
   syncActiveTabToState();
+  if (state.autoReveal) {
+    syncAutoRevealInTree(rootPath, item.relPath);
+  }
   renderPreviewContent();
 
   try {
@@ -2167,6 +2227,14 @@ function hydrateFromInitialData(data) {
       // ignore
     }
   }
+  if (typeof data.autoReveal === 'boolean') {
+    state.autoReveal = data.autoReveal;
+    try {
+      window.localStorage?.setItem('workspace_explorer_auto_reveal', String(state.autoReveal));
+    } catch {
+      // ignore
+    }
+  }
   state.projects = Array.isArray(data.projects) ? data.projects : [];
   state.activeProject = data.activeProject || null;
   state.viewMode = data.viewMode || (state.activeProject ? 'single' : 'all');
@@ -2229,6 +2297,28 @@ if ($btnOpenMode) {
     }
     try {
       await callTool('set_language', { openMode: state.openMode });
+    } catch {
+      // ignore
+    }
+  };
+}
+
+if ($btnAutoReveal) {
+  $btnAutoReveal.onclick = async () => {
+    state.autoReveal = !state.autoReveal;
+    try {
+      window.localStorage?.setItem('workspace_explorer_auto_reveal', String(state.autoReveal));
+    } catch {
+      // ignore
+    }
+    hideContextMenu();
+    renderHeader();
+    showToast(state.autoReveal ? t('toastAutoRevealOn') : t('toastAutoRevealOff'));
+    if (state.autoReveal && state.previewItem) {
+      syncAutoRevealInTree(state.previewItem.rootPath, state.previewItem.relPath);
+    }
+    try {
+      await callTool('set_language', { autoReveal: state.autoReveal });
     } catch {
       // ignore
     }
