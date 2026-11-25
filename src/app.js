@@ -11,6 +11,7 @@ const app = new App({ name: 'Workspace Explorer', version: '1.0.0' }, {});
 const ToggleAuxPaneResultSchema = z.object({ isError: z.boolean().optional() }).passthrough();
 
 const KEY_SEP = '\0';
+const EXTERNAL_ROOT_SENTINEL = '__EXTERNAL__';
 
 function makeDirKey(rootPath, relPath = '') {
   return `${rootPath}${KEY_SEP}${relPath}`;
@@ -179,6 +180,17 @@ const I18N = {
     previewTruncated: '\n\n... [File exceeds 200KB, output truncated]',
     previewDeleted: (name) => `File was deleted or moved: ${name}`,
     previewReadError: (msg) => `Failed to read file: ${msg}`,
+    addressBarTitle: 'Click to edit or paste a file path, press Enter to open (Esc to cancel)',
+    addressBarPlaceholder: 'Enter file path and press Enter to open...',
+    newScratchTabTitle: 'New Blank Tab (Temporary Scratchpad)',
+    scratchPlaceholder: 'Temporary blank page — type or paste anything here...',
+    scratchMeta: (sizeStr, lines) => `${sizeStr} · ${lines} ${lines === 1 ? 'line' : 'lines'}`,
+    toastPathNotFound: (p) => `File not found: ${p}`,
+    toastPathIsExternalDir: (p) => `Cannot open external folder as a file: ${p}`,
+    toastPathRelativeNoProj: 'Please enter an absolute file path',
+    toastPathOpenFailed: (msg) => `Failed to open path: ${msg}`,
+    toastOpenedExternal: (name) => `Opened external file: ${name}`,
+    toastRevealedFolder: (rel) => `Located folder in tree: ${rel}`,
     scriptError: (msg) => `Script error: ${msg}`,
     connectError: (msg) => `Failed to connect to host: ${msg}`,
   },
@@ -307,6 +319,17 @@ const I18N = {
     previewTruncated: '\n\n... [文件超过 200KB，已截断显示]',
     previewDeleted: (name) => `文件已被删除或移动: ${name}`,
     previewReadError: (msg) => `无法读取文件: ${msg}`,
+    addressBarTitle: '点击编辑或粘贴文件路径，按 Enter 打开（Esc 取消）',
+    addressBarPlaceholder: '输入文件路径并按 Enter 打开...',
+    newScratchTabTitle: '新建临时空白页',
+    scratchPlaceholder: '临时空白页 — 可在此自由输入或粘贴任意内容...',
+    scratchMeta: (sizeStr, lines) => `${sizeStr} · ${lines} 行`,
+    toastPathNotFound: (p) => `未找到文件: ${p}`,
+    toastPathIsExternalDir: (p) => `无法直接打开外部文件夹，请输入文件路径: ${p}`,
+    toastPathRelativeNoProj: '当前未选定工程，请输入完整绝对路径',
+    toastPathOpenFailed: (msg) => `打开路径失败: ${msg}`,
+    toastOpenedExternal: (name) => `已打开外部文件: ${name}`,
+    toastRevealedFolder: (rel) => `已在目录树中定位文件夹: ${rel}`,
     scriptError: (msg) => `脚本错误: ${msg}`,
     connectError: (msg) => `连接宿主失败: ${msg}`,
   },
@@ -359,7 +382,8 @@ function t(key, ...args) {
 }
 
 let searchSeq = 0;
-let previewSeq = 0;
+let scratchTabSeq = 0;
+let subbarDisplayText = '';
 
 // DOM elements
 const $projectSelect = document.getElementById('projectSelect');
@@ -380,7 +404,9 @@ const $subbarBadge = document.getElementById('subbarBadge');
 const $mainSplit = document.getElementById('mainSplit');
 const $treeContainer = document.getElementById('treeContainer');
 const $previewPane = document.getElementById('previewPane');
+const $previewTabsWrap = document.getElementById('previewTabsWrap');
 const $previewTabsBar = document.getElementById('previewTabsBar');
+const $btnNewScratchTab = document.getElementById('btnNewScratchTab');
 const $previewResizer = document.getElementById('previewResizer');
 const $previewTitle = document.getElementById('previewTitle');
 const $previewMeta = document.getElementById('previewMeta');
@@ -431,6 +457,13 @@ function renderStaticTexts() {
   $btnFuzzy.title = t('fuzzyTitle');
   $btnCase.title = t('caseTitle');
   $btnRegex.title = t('regexTitle');
+  if ($subbarPath) {
+    $subbarPath.title = t('addressBarTitle');
+    $subbarPath.placeholder = t('addressBarPlaceholder');
+  }
+  if ($btnNewScratchTab) {
+    $btnNewScratchTab.title = t('newScratchTabTitle');
+  }
   $previewResizer.title = t('resizerTitle');
   if ($btnModeRender) $btnModeRender.textContent = t('modeRenderBtn');
   if ($btnModeRaw) $btnModeRaw.textContent = t('modeRawBtn');
@@ -970,12 +1003,54 @@ function getActiveTab() {
   return state.openTabs.find((t) => t.key === state.activeTabKey) || null;
 }
 
+function formatScratchMeta(content) {
+  const text = String(content || '');
+  const bytes = new TextEncoder().encode(text).length;
+  const lines = text.length === 0 ? 1 : text.split(/\r?\n/).length;
+  return t('scratchMeta', formatFileSize(bytes), lines);
+}
+
+function getNextScratchName() {
+  const used = new Set(
+    state.openTabs.filter((tab) => tab.isScratch).map((tab) => tab.item.name),
+  );
+  if (!used.has('untitled')) return 'untitled';
+  let n = 2;
+  while (used.has(`untitled-${n}`)) n++;
+  return `untitled-${n}`;
+}
+
 function saveActiveTabScroll() {
   const curr = getActiveTab();
-  if (curr && $previewBody) {
+  if (!curr || !$previewBody) return;
+  if (curr.isScratch) {
+    const ta = $previewBody.querySelector('.scratch-editor');
+    if (ta) {
+      curr.scrollTop = ta.scrollTop;
+      curr.scrollLeft = ta.scrollLeft;
+    }
+  } else {
     curr.scrollTop = $previewBody.scrollTop;
     curr.scrollLeft = $previewBody.scrollLeft;
   }
+}
+
+function restoreActiveTabScroll(tab) {
+  if (!tab || !$previewBody) return;
+  requestAnimationFrame(() => {
+    if (tab.isScratch) {
+      const ta = $previewBody.querySelector('.scratch-editor');
+      const gutter = $previewBody.querySelector('.scratch-gutter');
+      if (ta) {
+        ta.scrollTop = tab.scrollTop || 0;
+        ta.scrollLeft = tab.scrollLeft || 0;
+        if (gutter) gutter.scrollTop = ta.scrollTop;
+      }
+    } else {
+      $previewBody.scrollTop = tab.scrollTop || 0;
+      $previewBody.scrollLeft = tab.scrollLeft || 0;
+    }
+  });
 }
 
 function syncActiveTabToState() {
@@ -990,16 +1065,60 @@ function syncActiveTabToState() {
   }
 }
 
+function openNewScratchTab() {
+  saveActiveTabScroll();
+  setPreviewSplitOpen(true);
+
+  const name = getNextScratchName();
+  const tabKey = `scratch:${++scratchTabSeq}`;
+  const tab = {
+    key: tabKey,
+    isScratch: true,
+    rootPath: null,
+    item: {
+      name,
+      relPath: name,
+      absPath: '',
+      ext: 'txt',
+      isDir: false,
+      isScratch: true,
+    },
+    data: {
+      isScratch: true,
+      content: '',
+      size: 0,
+    },
+    loading: false,
+    syncing: false,
+    fetchSeq: 0,
+    renderMode: 'raw',
+    scrollTop: 0,
+    scrollLeft: 0,
+  };
+  state.openTabs.push(tab);
+  state.activeTabKey = tabKey;
+  syncActiveTabToState();
+  renderPreviewContent();
+
+  requestAnimationFrame(() => {
+    const ta = $previewBody?.querySelector('.scratch-editor');
+    if (ta) ta.focus();
+  });
+}
+
 function renderPreviewTabs() {
   if (!$previewTabsBar) return;
   $previewTabsBar.innerHTML = '';
-  $previewTabsBar.classList.toggle('has-tabs', state.openTabs.length > 0);
 
   for (const tab of state.openTabs) {
     const isActive = tab.key === state.activeTabKey;
     const tabEl = document.createElement('div');
     tabEl.className = 'preview-tab' + (isActive ? ' active' : '');
-    tabEl.title = tab.item.relPath || tab.item.absPath || tab.item.name;
+    tabEl.title = tab.isScratch
+      ? tab.item.name
+      : tab.item.isExternal
+        ? tab.item.absPath || tab.item.name
+        : tab.item.relPath || tab.item.absPath || tab.item.name;
 
     const iconEl = createIconNode(tab.item, false);
     iconEl.style.marginRight = '2px';
@@ -1023,7 +1142,7 @@ function renderPreviewTabs() {
     tabEl.onclick = () => {
       if (state.activeTabKey !== tab.key) {
         activatePreviewTab(tab.key);
-      } else {
+      } else if (!tab.isScratch) {
         syncTabFile(tab, { silent: true });
       }
     };
@@ -1052,20 +1171,20 @@ function activatePreviewTab(tabKey) {
   saveActiveTabScroll();
   state.activeTabKey = tabKey;
   syncActiveTabToState();
-  if (state.autoReveal && state.previewItem) {
+  if (
+    state.autoReveal &&
+    state.previewItem &&
+    !state.previewItem.isScratch &&
+    !state.previewItem.isExternal
+  ) {
     syncAutoRevealInTree(state.previewItem.rootPath, state.previewItem.relPath);
   } else {
     renderTree();
   }
   renderPreviewContent();
   const tab = getActiveTab();
-  if (tab && $previewBody) {
-    requestAnimationFrame(() => {
-      $previewBody.scrollTop = tab.scrollTop || 0;
-      $previewBody.scrollLeft = tab.scrollLeft || 0;
-    });
-  }
-  if (tab && !tab.loading) {
+  restoreActiveTabScroll(tab);
+  if (tab && !tab.loading && !tab.isScratch) {
     syncTabFile(tab, { silent: true });
   }
 }
@@ -1088,7 +1207,12 @@ function closePreviewTab(tabKey) {
     const nextIdx = Math.min(idx, state.openTabs.length - 1);
     state.activeTabKey = state.openTabs[nextIdx].key;
     syncActiveTabToState();
-    if (state.autoReveal && state.previewItem) {
+    if (
+      state.autoReveal &&
+      state.previewItem &&
+      !state.previewItem.isScratch &&
+      !state.previewItem.isExternal
+    ) {
       syncAutoRevealInTree(state.previewItem.rootPath, state.previewItem.relPath);
     } else {
       renderTree();
@@ -1097,13 +1221,8 @@ function closePreviewTab(tabKey) {
   renderPreviewContent();
   const activeTab = getActiveTab();
   if (wasActive && activeTab) {
-    if ($previewBody) {
-      requestAnimationFrame(() => {
-        $previewBody.scrollTop = activeTab.scrollTop || 0;
-        $previewBody.scrollLeft = activeTab.scrollLeft || 0;
-      });
-    }
-    if (!activeTab.loading) {
+    restoreActiveTabScroll(activeTab);
+    if (!activeTab.loading && !activeTab.isScratch) {
       syncTabFile(activeTab, { silent: true });
     }
   }
@@ -1126,7 +1245,31 @@ function renderPreviewHeaderControls() {
     return;
   }
 
-  $previewTitle.textContent = item.relPath || item.name;
+  if (item.isScratch) {
+    $previewTitle.textContent = item.name;
+    $previewTitle.title = item.name;
+    $previewMeta.textContent = formatScratchMeta(data?.content || '');
+    $previewModeTabs.classList.remove('visible');
+    if ($btnPreviewFind) {
+      $btnPreviewFind.style.display = '';
+      $btnPreviewFind.classList.toggle('active', state.findOpen);
+    }
+    if ($btnPreviewWrap) {
+      $btnPreviewWrap.style.display = '';
+      $btnPreviewWrap.classList.toggle('active', state.previewWrap);
+    }
+    if ($btnPreviewCopyContent) {
+      $btnPreviewCopyContent.style.display = data?.content ? '' : 'none';
+    }
+    $btnPreviewCopyRel.style.display = 'none';
+    $btnPreviewCopyAbs.style.display = 'none';
+    $btnPreviewOpenNative.style.display = 'none';
+    return;
+  }
+
+  $previewTitle.textContent = item.isExternal
+    ? item.absPath || item.name
+    : item.relPath || item.name;
   $previewTitle.title = item.absPath || item.relPath || item.name;
   $previewMeta.textContent = data?.size !== undefined ? formatFileSize(data.size) : '';
 
@@ -1153,18 +1296,20 @@ function renderPreviewHeaderControls() {
     $btnPreviewWrap.classList.toggle('active', state.previewWrap);
   }
   if ($btnPreviewCopyContent) {
-    $btnPreviewCopyContent.style.display = data && !data.isBinary && data.content ? '' : 'none';
+    $btnPreviewCopyContent.style.display = hasValidData && !data.isBinary && data.content ? '' : 'none';
   }
-  $btnPreviewCopyRel.style.display = '';
-  $btnPreviewCopyAbs.style.display = '';
-  $btnPreviewOpenNative.style.display = '';
+  $btnPreviewCopyRel.style.display = item.isExternal || !item.relPath ? 'none' : '';
+  $btnPreviewCopyAbs.style.display = item.absPath ? '' : 'none';
+  $btnPreviewOpenNative.style.display = item.fileUri ? '' : 'none';
 }
 
 // In-File Find (Ctrl+F) state & DOM highlighter
 let inFileMatchGroups = []; // Array<Array<HTMLElement>> where each element is the mark nodes for one match
+let scratchFindRanges = []; // Array<[start, end]> for temporary scratchpad tabs
 
 function clearInFileHighlights() {
   inFileMatchGroups = [];
+  scratchFindRanges = [];
   if (!$previewBody) return;
   const marks = $previewBody.querySelectorAll('mark.find-hl');
   if (marks.length === 0) return;
@@ -1177,26 +1322,56 @@ function clearInFileHighlights() {
   $previewBody.normalize();
 }
 
+function getActiveFindTotal() {
+  return state.previewItem?.isScratch ? scratchFindRanges.length : inFileMatchGroups.length;
+}
+
 function updateFindCountUI(regexErr = false) {
   if (!$findCount || !$findInput) return;
   $findInput.classList.toggle('invalid', Boolean(regexErr));
   const q = state.findQuery;
+  const total = getActiveFindTotal();
   if (!q) {
     $findCount.textContent = '0 / 0';
     $findCount.classList.remove('no-match');
     return;
   }
-  if (regexErr || inFileMatchGroups.length === 0) {
+  if (regexErr || total === 0) {
     $findCount.textContent = t('findNoMatch');
     $findCount.classList.add('no-match');
     return;
   }
   $findCount.classList.remove('no-match');
-  $findCount.textContent = `${state.findCurrentIdx + 1} / ${inFileMatchGroups.length}`;
+  $findCount.textContent = `${state.findCurrentIdx + 1} / ${total}`;
 }
 
 function highlightActiveInFileMatch(scrollIntoView = true) {
   if (!$previewBody) return;
+  if (state.previewItem?.isScratch) {
+    if (scratchFindRanges.length === 0) {
+      updateFindCountUI(false);
+      return;
+    }
+    if (state.findCurrentIdx < 0 || state.findCurrentIdx >= scratchFindRanges.length) {
+      state.findCurrentIdx = 0;
+    }
+    if (scrollIntoView) {
+      const ta = $previewBody.querySelector('.scratch-editor');
+      const [start, end] = scratchFindRanges[state.findCurrentIdx];
+      if (ta) {
+        const before = ta.value.slice(0, start);
+        const lineIdx = before.split(/\r?\n/).length - 1;
+        const lineHeight = 22.4;
+        const targetTop = Math.max(0, lineIdx * lineHeight - ta.clientHeight / 3);
+        ta.scrollTop = targetTop;
+        const gutter = $previewBody.querySelector('.scratch-gutter');
+        if (gutter) gutter.scrollTop = ta.scrollTop;
+        ta.setSelectionRange(start, end);
+      }
+    }
+    updateFindCountUI(false);
+    return;
+  }
   const prevMarks = $previewBody.querySelectorAll('mark.find-hl.current');
   for (const m of prevMarks) {
     m.classList.remove('current');
@@ -1234,6 +1409,27 @@ function applyInFileFind(scrollToCurrent = true, resetIndex = true) {
     re = new RegExp(pattern, state.findCaseSensitive ? 'g' : 'gi');
   } catch {
     updateFindCountUI(true);
+    return;
+  }
+
+  if (state.previewItem?.isScratch) {
+    const text = String(state.previewData.content || '');
+    const MAX_MATCHES = 2000;
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      scratchFindRanges.push([m.index, m.index + m[0].length]);
+      if (scratchFindRanges.length >= MAX_MATCHES) break;
+    }
+    state.findTotal = scratchFindRanges.length;
+    if (resetIndex || state.findCurrentIdx >= scratchFindRanges.length) {
+      state.findCurrentIdx = 0;
+    }
+    highlightActiveInFileMatch(scrollToCurrent);
     return;
   }
 
@@ -1360,9 +1556,9 @@ function applyInFileFind(scrollToCurrent = true, resetIndex = true) {
 }
 
 function stepInFileMatch(delta) {
-  if (inFileMatchGroups.length === 0) return;
-  state.findCurrentIdx =
-    (state.findCurrentIdx + delta + inFileMatchGroups.length) % inFileMatchGroups.length;
+  const total = getActiveFindTotal();
+  if (total === 0) return;
+  state.findCurrentIdx = (state.findCurrentIdx + delta + total) % total;
   highlightActiveInFileMatch(true);
 }
 
@@ -1373,15 +1569,21 @@ function openFindBar() {
   if ($findBar) $findBar.classList.add('open');
   if ($btnPreviewFind) $btnPreviewFind.classList.add('active');
 
-  // Pre-fill from selection inside previewBody if non-empty and single-line
+  // Pre-fill from selection inside previewBody (or scratchpad textarea) if non-empty and single-line
   try {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0 && $previewBody.contains(sel.anchorNode)) {
-      const selText = sel.toString().trim();
-      if (selText && !selText.includes('\n') && selText.length <= 120) {
-        state.findQuery = selText;
-        if ($findInput) $findInput.value = selText;
+    let selText = '';
+    const ta = state.previewItem?.isScratch ? $previewBody.querySelector('.scratch-editor') : null;
+    if (ta && ta.selectionEnd > ta.selectionStart) {
+      selText = ta.value.slice(ta.selectionStart, ta.selectionEnd).trim();
+    } else {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && $previewBody.contains(sel.anchorNode)) {
+        selText = sel.toString().trim();
       }
+    }
+    if (selText && !selText.includes('\n') && selText.length <= 120) {
+      state.findQuery = selText;
+      if ($findInput) $findInput.value = selText;
     }
   } catch {
     // ignore selection errors
@@ -1401,15 +1603,96 @@ function closeFindBar() {
   clearInFileHighlights();
 }
 
+function renderScratchEditor(tab) {
+  const wrap = document.createElement('div');
+  wrap.className = 'scratch-wrap';
+
+  const gutter = document.createElement('div');
+  gutter.className = 'scratch-gutter';
+
+  const ta = document.createElement('textarea');
+  ta.className = 'scratch-editor' + (state.previewWrap ? ' wrap' : '');
+  ta.spellcheck = false;
+  ta.placeholder = t('scratchPlaceholder');
+  ta.value = tab.data?.content || '';
+
+  const updateGutter = () => {
+    const lineCount = ta.value.length === 0 ? 1 : ta.value.split(/\r?\n/).length;
+    let nums = '';
+    for (let i = 1; i <= lineCount; i++) {
+      nums += i === lineCount ? String(i) : `${i}\n`;
+    }
+    gutter.textContent = nums;
+  };
+  updateGutter();
+
+  ta.oninput = () => {
+    tab.data.content = ta.value;
+    tab.data.size = new TextEncoder().encode(ta.value).length;
+    updateGutter();
+    $previewMeta.textContent = formatScratchMeta(ta.value);
+    if ($btnPreviewCopyContent) {
+      $btnPreviewCopyContent.style.display = ta.value ? '' : 'none';
+    }
+    if (state.findOpen && state.findQuery) {
+      applyInFileFind(false, false);
+    }
+  };
+
+  ta.onscroll = () => {
+    gutter.scrollTop = ta.scrollTop;
+    tab.scrollTop = ta.scrollTop;
+    tab.scrollLeft = ta.scrollLeft;
+  };
+
+  ta.onkeydown = (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      if (e.shiftKey) {
+        const lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
+        const prefix = ta.value.slice(lineStart, lineStart + 2);
+        const removeLen = prefix.startsWith('\t') ? 1 : prefix === '  ' ? 2 : prefix.startsWith(' ') ? 1 : 0;
+        if (removeLen > 0) {
+          ta.value = ta.value.slice(0, lineStart) + ta.value.slice(lineStart + removeLen);
+          const nextStart = Math.max(lineStart, start - removeLen);
+          const nextEnd = Math.max(lineStart, end - removeLen);
+          ta.setSelectionRange(nextStart, nextEnd);
+          ta.dispatchEvent(new Event('input'));
+        }
+      } else {
+        ta.value = ta.value.slice(0, start) + '  ' + ta.value.slice(end);
+        ta.setSelectionRange(start + 2, start + 2);
+        ta.dispatchEvent(new Event('input'));
+      }
+    }
+  };
+
+  wrap.appendChild(gutter);
+  wrap.appendChild(ta);
+  $previewBody.appendChild(wrap);
+  if (state.findOpen && state.findQuery) {
+    applyInFileFind(false, false);
+  }
+}
+
 function renderPreviewContent() {
   syncActiveTabToState();
   renderPreviewHeaderControls();
   inFileMatchGroups = [];
+  scratchFindRanges = [];
   $previewBody.innerHTML = '';
 
   if (!state.previewItem) {
     setEmptyMessage($previewBody, t('previewEmptyHint'));
     if (state.findOpen) updateFindCountUI(false);
+    return;
+  }
+
+  const activeTab = getActiveTab();
+  if (state.previewItem.isScratch && activeTab) {
+    renderScratchEditor(activeTab);
     return;
   }
 
@@ -1700,7 +1983,9 @@ async function syncTabFile(tab, { force = false, silent = true, showLoading = fa
   }
 }
 
-async function openFileInlinePreview(item, rootPath, forceReload = false) {
+async function openFileInlinePreview(item, rootPath, forceReload = false, options = {}) {
+  const { revealInTree: forceReveal = false } = options;
+  const isExternal = Boolean(item.isExternal || rootPath === EXTERNAL_ROOT_SENTINEL);
   const tabKey = makeDirKey(rootPath, item.relPath);
   let tab = state.openTabs.find((t) => t.key === tabKey);
 
@@ -1709,11 +1994,18 @@ async function openFileInlinePreview(item, rootPath, forceReload = false) {
   if (tab && !forceReload && (tab.loading || (tab.data && !tab.data.error && !tab.data.deleted))) {
     if (state.activeTabKey !== tabKey) {
       activatePreviewTab(tabKey);
-    } else {
-      if (state.autoReveal) {
-        syncAutoRevealInTree(rootPath, item.relPath);
+      if (forceReveal && !isExternal) {
+        revealInTree(rootPath, item.relPath, false);
       }
-      if (!tab.loading) {
+    } else {
+      if (!isExternal && (forceReveal || state.autoReveal)) {
+        if (forceReveal) {
+          revealInTree(rootPath, item.relPath, false);
+        } else {
+          syncAutoRevealInTree(rootPath, item.relPath);
+        }
+      }
+      if (!tab.loading && !tab.isScratch) {
         syncTabFile(tab, { force: false, silent: true, showLoading: false });
       }
     }
@@ -1727,7 +2019,7 @@ async function openFileInlinePreview(item, rootPath, forceReload = false) {
     tab = {
       key: tabKey,
       rootPath,
-      item: { ...item, rootPath },
+      item: { ...item, rootPath, isExternal },
       data: null,
       loading: true,
       syncing: false,
@@ -1741,8 +2033,12 @@ async function openFileInlinePreview(item, rootPath, forceReload = false) {
 
   state.activeTabKey = tabKey;
   syncActiveTabToState();
-  if (state.autoReveal) {
-    syncAutoRevealInTree(rootPath, item.relPath);
+  if (!isExternal && (forceReveal || state.autoReveal)) {
+    if (forceReveal) {
+      revealInTree(rootPath, item.relPath, false);
+    } else {
+      syncAutoRevealInTree(rootPath, item.relPath);
+    }
   }
   await syncTabFile(tab, {
     force: true,
@@ -1886,6 +2182,76 @@ async function toggleProjectRoot(project) {
   }
 }
 
+function setSubbarDisplayText(text) {
+  subbarDisplayText = text || '';
+  if ($subbarPath && document.activeElement !== $subbarPath) {
+    $subbarPath.value = subbarDisplayText;
+  }
+}
+
+async function openPathFromAddressBar(rawInput) {
+  const trimmed = String(rawInput || '').trim();
+  if (!trimmed) {
+    if ($subbarPath) {
+      $subbarPath.value = subbarDisplayText;
+      $subbarPath.blur();
+    }
+    return;
+  }
+
+  try {
+    const activeRootPath =
+      state.viewMode === 'single' && state.activeProject
+        ? state.activeProject.rootPath
+        : undefined;
+    const res = await callTool('resolve_local_path', {
+      inputPath: trimmed,
+      activeRootPath,
+    });
+
+    if (!res?.exists) {
+      if (res?.reason === 'relative_without_root') {
+        showToast(t('toastPathRelativeNoProj'));
+      } else {
+        showToast(t('toastPathNotFound', res?.absPath || trimmed));
+      }
+      return;
+    }
+
+    if (res.isDir) {
+      if (res.inActiveProject) {
+        if ($subbarPath) $subbarPath.blur();
+        await revealInTree(res.rootPath, res.relPath, true);
+        showToast(t('toastRevealedFolder', res.relPath || res.name));
+      } else {
+        showToast(t('toastPathIsExternalDir', res.absPath));
+      }
+      return;
+    }
+
+    if ($subbarPath) $subbarPath.blur();
+    const item = {
+      name: res.name,
+      relPath: res.relPath,
+      absPath: res.absPath,
+      rootPath: res.rootPath,
+      fileUri: res.fileUri,
+      ext: res.ext,
+      size: res.size,
+      isDir: false,
+      isExternal: Boolean(res.isExternal),
+    };
+    await openFileInlinePreview(item, res.rootPath, false, {
+      revealInTree: Boolean(res.inActiveProject),
+    });
+    if (res.isExternal) {
+      showToast(t('toastOpenedExternal', res.name));
+    }
+  } catch (err) {
+    showToast(t('toastPathOpenFailed', err.message));
+  }
+}
+
 function renderHeader() {
   renderStaticTexts();
   $projectSelect.innerHTML = '';
@@ -1904,7 +2270,7 @@ function renderHeader() {
 
   if (!state.initialized) {
     $projectSelect.value = '__ALL__';
-    $subbarPath.textContent = t('loadingProjectsSubbar');
+    setSubbarDisplayText(t('loadingProjectsSubbar'));
     $subbarBadge.textContent = '';
     $btnToggleHidden.classList.toggle('active', state.showHidden);
     return;
@@ -1913,12 +2279,12 @@ function renderHeader() {
   if (state.viewMode === 'all') {
     $projectSelect.value = '__ALL__';
     $btnAllMode.classList.add('active');
-    $subbarPath.textContent = t('allProjectsSubbar', state.projects.length);
+    setSubbarDisplayText(t('allProjectsSubbar', state.projects.length));
     $subbarBadge.textContent = t('allProjectsBadge');
   } else if (state.activeProject) {
     $projectSelect.value = state.activeProject.rootPath;
     $btnAllMode.classList.remove('active');
-    $subbarPath.textContent = state.activeProject.rootPath;
+    setSubbarDisplayText(state.activeProject.rootPath);
     const badgeMap = {
       arg: t('badgeArg'),
       'active-chat': t('badgeActiveChat'),
@@ -1931,7 +2297,7 @@ function renderHeader() {
     $subbarBadge.textContent = badgeMap[state.detectedBy] || t('badgeDefault');
   } else {
     $projectSelect.value = '__ALL__';
-    $subbarPath.textContent = t('noProjectSubbar');
+    setSubbarDisplayText(t('noProjectSubbar'));
     $subbarBadge.textContent = '';
   }
 
@@ -2457,7 +2823,12 @@ if ($btnAutoReveal) {
     hideContextMenu();
     renderHeader();
     showToast(state.autoReveal ? t('toastAutoRevealOn') : t('toastAutoRevealOff'));
-    if (state.autoReveal && state.previewItem) {
+    if (
+      state.autoReveal &&
+      state.previewItem &&
+      !state.previewItem.isScratch &&
+      !state.previewItem.isExternal
+    ) {
       syncAutoRevealInTree(state.previewItem.rootPath, state.previewItem.relPath);
     }
     try {
@@ -2535,7 +2906,7 @@ $btnRefresh.onclick = async () => {
   renderHeader();
   await reloadVisibleDirs();
   const activeTab = getActiveTab();
-  if (activeTab) {
+  if (activeTab && !activeTab.isScratch) {
     await openFileInlinePreview(activeTab.item, activeTab.rootPath, true);
   }
   if (hasActiveSearch()) {
@@ -2676,9 +3047,49 @@ if ($btnFindClose) {
   $btnFindClose.onclick = () => closeFindBar();
 }
 
+if ($subbarPath) {
+  $subbarPath.addEventListener('focus', () => {
+    $subbarPath.select();
+  });
+  $subbarPath.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      openPathFromAddressBar($subbarPath.value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      $subbarPath.value = subbarDisplayText;
+      $subbarPath.blur();
+    }
+  });
+  $subbarPath.addEventListener('blur', () => {
+    $subbarPath.value = subbarDisplayText;
+  });
+}
+
+if ($btnNewScratchTab) {
+  $btnNewScratchTab.onclick = () => openNewScratchTab();
+}
+
+if ($previewTabsWrap) {
+  $previewTabsWrap.ondblclick = (e) => {
+    if (e.target === $previewTabsWrap || e.target === $previewTabsBar) {
+      openNewScratchTab();
+    }
+  };
+}
+
 if ($btnPreviewWrap) {
   $btnPreviewWrap.onclick = () => {
     state.previewWrap = !state.previewWrap;
+    if (state.previewItem?.isScratch) {
+      const ta = $previewBody?.querySelector('.scratch-editor');
+      if (ta) {
+        ta.classList.toggle('wrap', state.previewWrap);
+        $btnPreviewWrap.classList.toggle('active', state.previewWrap);
+        return;
+      }
+    }
     renderPreviewContent();
   };
 }
@@ -2843,7 +3254,7 @@ async function syncActiveOpenFile(immediate = false) {
   if (!$mainSplit.classList.contains('preview-open')) return;
   if (!immediate && inFlightToolCalls >= 2) return;
   const tab = getActiveTab();
-  if (!tab || tab.loading || tab.syncing) return;
+  if (!tab || tab.loading || tab.syncing || tab.isScratch) return;
   await syncTabFile(tab, { force: false, silent: true, showLoading: false });
 }
 

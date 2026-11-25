@@ -70,6 +70,9 @@ const IGNORED_SEARCH_DIRS = new Set([
 
 // Roots explicitly passed to open_explorer during this server session
 const sessionAllowedRoots = new Map(); // normalizedKey -> resolvedPath
+// External files explicitly opened via the UI address bar during this session
+const EXTERNAL_ROOT_SENTINEL = '__EXTERNAL__';
+const sessionAllowedExternalFiles = new Set(); // normalizedKey
 
 function uriToLocalPath(uri) {
   if (!uri || typeof uri !== 'string') return null;
@@ -1018,15 +1021,31 @@ async function readFileFullBuffer(absPath, allowRetry) {
 }
 
 async function readFilePreview(rootPath, relPath, { expectedVersion, silent = false } = {}) {
-  const resolvedRoot = await assertAllowedRoot(rootPath);
-  const absPath = path.resolve(resolvedRoot, relPath);
-  if (!isSubPath(resolvedRoot, absPath)) {
-    throw new Error('Access denied: path escapes project root');
+  const isExternal = rootPath === EXTERNAL_ROOT_SENTINEL;
+  let resolvedRoot = null;
+  let absPath;
+  let normalizedRel;
+
+  if (isExternal) {
+    if (!relPath || typeof relPath !== 'string') {
+      throw new Error('Missing file path');
+    }
+    absPath = path.resolve(relPath);
+    if (!sessionAllowedExternalFiles.has(normalizePathKey(absPath))) {
+      throw new Error('Access denied: external file is not authorized');
+    }
+    normalizedRel = absPath;
+  } else {
+    resolvedRoot = await assertAllowedRoot(rootPath);
+    absPath = path.resolve(resolvedRoot, relPath);
+    if (!isSubPath(resolvedRoot, absPath)) {
+      throw new Error('Access denied: path escapes project root');
+    }
+    normalizedRel = toPosixRel(resolvedRoot, absPath);
   }
 
   const name = path.basename(absPath);
   const ext = path.extname(name).toLowerCase().replace(/^\./, '');
-  const normalizedRel = toPosixRel(resolvedRoot, absPath);
   const fileUri = localPathToUri(absPath);
   const hasExpected = typeof expectedVersion === 'string' && expectedVersion.length > 0;
 
@@ -1134,7 +1153,7 @@ async function readFilePreview(rootPath, relPath, { expectedVersion, silent = fa
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const MAX_TEXT_BYTES = 200 * 1024;
 
-  if (!silent) {
+  if (!silent && !isExternal && resolvedRoot) {
     await addRecentFile({
       name,
       relPath: normalizedRel,
@@ -1782,6 +1801,134 @@ mcp.registerTool(
 );
 
 mcp.registerTool(
+  'resolve_local_path',
+  {
+    title: 'Resolve Local Path',
+    description:
+      'Resolve a user-entered file or folder path from the address bar, checking whether it belongs to the active project or is an external local file.',
+    inputSchema: {
+      inputPath: z.string(),
+      activeRootPath: z.string().optional(),
+    },
+    _meta: APP_ONLY_META,
+  },
+  async ({ inputPath, activeRootPath }) => {
+    let raw = String(inputPath || '').trim();
+    if (
+      (raw.startsWith('"') && raw.endsWith('"') && raw.length >= 2) ||
+      (raw.startsWith("'") && raw.endsWith("'") && raw.length >= 2)
+    ) {
+      raw = raw.slice(1, -1).trim();
+    }
+    if (!raw) {
+      return {
+        content: [{ type: 'text', text: 'empty' }],
+        structuredContent: { exists: false, reason: 'empty', absPath: '' },
+      };
+    }
+
+    if (raw.startsWith('file://')) {
+      raw = uriToLocalPath(raw) || raw;
+    } else if (raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\')) {
+      raw = path.join(os.homedir(), raw.slice(1));
+    }
+
+    let resolvedActiveRoot = null;
+    if (activeRootPath) {
+      try {
+        resolvedActiveRoot = await assertAllowedRoot(activeRootPath);
+      } catch {
+        resolvedActiveRoot = path.resolve(activeRootPath);
+      }
+    }
+
+    let candidate;
+    if (path.isAbsolute(raw)) {
+      candidate = path.resolve(raw);
+    } else if (resolvedActiveRoot) {
+      candidate = path.resolve(resolvedActiveRoot, raw);
+    } else {
+      return {
+        content: [{ type: 'text', text: 'relative_without_root' }],
+        structuredContent: { exists: false, reason: 'relative_without_root', absPath: raw },
+      };
+    }
+
+    let stat;
+    try {
+      stat = await fs.stat(candidate);
+    } catch {
+      return {
+        content: [{ type: 'text', text: 'not_found' }],
+        structuredContent: { exists: false, reason: 'not_found', absPath: candidate },
+      };
+    }
+
+    let absPath = candidate;
+    try {
+      absPath = await fs.realpath(candidate);
+    } catch {
+      absPath = candidate;
+    }
+
+    const isDir = stat.isDirectory();
+    const name = path.basename(absPath) || absPath;
+    const ext = isDir ? '' : path.extname(name).toLowerCase().replace(/^\./, '');
+    const fileUri = localPathToUri(absPath);
+
+    let inActiveProject = false;
+    let rootPath = EXTERNAL_ROOT_SENTINEL;
+    let relPath = absPath;
+    let isExternal = true;
+
+    if (resolvedActiveRoot && isSubPath(resolvedActiveRoot, candidate)) {
+      inActiveProject = true;
+      isExternal = false;
+      rootPath = resolvedActiveRoot;
+      relPath = toPosixRel(resolvedActiveRoot, candidate);
+      absPath = candidate;
+    } else if (resolvedActiveRoot && isSubPath(resolvedActiveRoot, absPath)) {
+      inActiveProject = true;
+      isExternal = false;
+      rootPath = resolvedActiveRoot;
+      relPath = toPosixRel(resolvedActiveRoot, absPath);
+    } else if (!resolvedActiveRoot) {
+      const allowed = await getAllowedProjectsMap();
+      for (const proj of allowed.values()) {
+        if (isSubPath(proj.rootPath, absPath)) {
+          inActiveProject = true;
+          isExternal = false;
+          rootPath = proj.rootPath;
+          relPath = toPosixRel(proj.rootPath, absPath);
+          break;
+        }
+      }
+    }
+
+    if (isExternal && !isDir) {
+      sessionAllowedExternalFiles.add(normalizePathKey(absPath));
+    }
+
+    return {
+      content: [{ type: 'text', text: absPath }],
+      structuredContent: {
+        exists: true,
+        isDir,
+        absPath,
+        name,
+        ext,
+        fileUri,
+        size: stat.size,
+        inActiveProject,
+        isExternal,
+        rootPath,
+        relPath,
+      },
+    };
+  },
+);
+
+mcp.registerTool(
   'reveal_in_os',
   {
     title: 'Reveal in System File Explorer',
@@ -1793,10 +1940,18 @@ mcp.registerTool(
     _meta: APP_ONLY_META,
   },
   async ({ rootPath, relPath = '' }) => {
-    const resolvedRoot = await assertAllowedRoot(rootPath);
-    const absPath = relPath ? path.resolve(resolvedRoot, relPath) : resolvedRoot;
-    if (!isSubPath(resolvedRoot, absPath)) {
-      throw new Error('Access denied: path escapes project root');
+    let absPath;
+    if (rootPath === EXTERNAL_ROOT_SENTINEL) {
+      absPath = path.resolve(relPath);
+      if (!sessionAllowedExternalFiles.has(normalizePathKey(absPath))) {
+        throw new Error('Access denied: external file is not authorized');
+      }
+    } else {
+      const resolvedRoot = await assertAllowedRoot(rootPath);
+      absPath = relPath ? path.resolve(resolvedRoot, relPath) : resolvedRoot;
+      if (!isSubPath(resolvedRoot, absPath)) {
+        throw new Error('Access denied: path escapes project root');
+      }
     }
     const st = await fs.stat(absPath);
 
