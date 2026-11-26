@@ -181,8 +181,6 @@ async function readHookActiveWorkspace() {
     const resolved = path.resolve(parsed.workspacePath);
     const st = await fs.stat(resolved);
     if (!st.isDirectory()) return null;
-    const key = normalizePathKey(resolved);
-    sessionAllowedRoots.set(key, resolved);
     return {
       rootPath: resolved,
       conversationId: parsed.conversationId || null,
@@ -216,51 +214,69 @@ function parseRootFromUrisJson(workspaceUrisJson) {
   return null;
 }
 
-function resolveConversationWorkspace(agyDir, conversationId, hookActive) {
-  if (!conversationId) return null;
-  if (convSummaryCache.has(conversationId)) {
-    return convSummaryCache.get(conversationId);
+function matchRegisteredProject(projects, candidate) {
+  if (!candidate || !Array.isArray(projects) || projects.length === 0) return null;
+  if (candidate.rootPath) {
+    const uk = normalizePathKey(candidate.rootPath);
+    const byPath =
+      projects.find((p) => normalizePathKey(p.rootPath) === uk) ||
+      projects.find((p) => isSubPath(p.rootPath, candidate.rootPath));
+    if (byPath) return byPath;
   }
-  if (hookActive?.conversationId === conversationId && hookActive?.rootPath) {
-    const res = { rootPath: hookActive.rootPath, projectId: null };
-    convSummaryCache.set(conversationId, res);
-    return res;
+  if (candidate.projectId) {
+    const byId = projects.find((p) => p.id === candidate.projectId);
+    if (byId) return byId;
   }
+  return null;
+}
 
+function queryConversationMetaFromDb(stmt, conversationId) {
+  if (!stmt || !conversationId) return null;
+  try {
+    const orig = stmt.get(conversationId);
+    if (!orig) return null;
+    const isCli = orig.source === 'CORTEX_TRAJECTORY_SOURCE_CLI';
+    const isSubagent = Number(orig.nesting_depth) > 0 || Boolean(orig.parent_conversation_id);
+    const lastUserInputMs = Date.parse(orig.last_user_input_time || '') || 0;
+
+    let row = orig;
+    let hops = 0;
+    while (
+      row &&
+      (!row.workspace_uris || row.workspace_uris === '[]') &&
+      !row.project_id &&
+      row.parent_conversation_id &&
+      hops < 3
+    ) {
+      row = stmt.get(row.parent_conversation_id);
+      hops++;
+    }
+
+    const rootPath = row ? parseRootFromUrisJson(row.workspace_uris) : null;
+    const projectId =
+      row?.project_id && row.project_id !== 'default-cli-project' ? row.project_id : null;
+    return { rootPath, projectId, isCli, isSubagent, lastUserInputMs };
+  } catch {
+    return null;
+  }
+}
+
+function lookupConversationMeta(conversationId) {
+  if (!conversationId) return null;
   const sqlite = getSqlite();
-  const dbPath = path.join(agyDir, 'conversation_summaries.db');
-  if (sqlite?.DatabaseSync && fsSync.existsSync(dbPath)) {
+  if (!sqlite?.DatabaseSync) return null;
+
+  for (const agyDir of AGY_UI_DIRS) {
+    const dbPath = path.join(agyDir, 'conversation_summaries.db');
+    if (!fsSync.existsSync(dbPath)) continue;
     let db;
     try {
       db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
       const stmt = db.prepare(
-        'SELECT workspace_uris, project_id, parent_conversation_id FROM conversation_summaries WHERE conversation_id = ?',
+        'SELECT workspace_uris, project_id, parent_conversation_id, source, nesting_depth, last_user_input_time FROM conversation_summaries WHERE conversation_id = ?',
       );
-      let row = stmt.get(conversationId);
-      let hops = 0;
-      while (
-        row &&
-        (!row.workspace_uris || row.workspace_uris === '[]') &&
-        !row.project_id &&
-        row.parent_conversation_id &&
-        hops < 3
-      ) {
-        row = stmt.get(row.parent_conversation_id);
-        hops++;
-      }
-      if (row) {
-        const rootPath = parseRootFromUrisJson(row.workspace_uris);
-        const projectId =
-          row.project_id && row.project_id !== 'default-cli-project' ? row.project_id : null;
-        if (rootPath) {
-          sessionAllowedRoots.set(normalizePathKey(rootPath), rootPath);
-        }
-        if (rootPath || projectId) {
-          const res = { rootPath, projectId };
-          convSummaryCache.set(conversationId, res);
-          return res;
-        }
-      }
+      const info = queryConversationMetaFromDb(stmt, conversationId);
+      if (info) return info;
     } catch {
       // ignore sqlite errors
     } finally {
@@ -271,8 +287,14 @@ function resolveConversationWorkspace(agyDir, conversationId, hookActive) {
       }
     }
   }
+  return null;
+}
 
-  // Fallback for Node runtimes without node:sqlite: scan agyhub_summaries_proto.pb
+function resolveConversationFallbackPb(agyDir, conversationId) {
+  if (!conversationId) return null;
+  if (convSummaryCache.has(conversationId)) {
+    return convSummaryCache.get(conversationId);
+  }
   try {
     const pbPath = path.join(agyDir, 'agyhub_summaries_proto.pb');
     if (fsSync.existsSync(pbPath)) {
@@ -287,8 +309,13 @@ function resolveConversationWorkspace(agyDir, conversationId, hookActive) {
           const resolved = path.resolve(local);
           try {
             if (fsSync.statSync(resolved).isDirectory()) {
-              sessionAllowedRoots.set(normalizePathKey(resolved), resolved);
-              const res = { rootPath: resolved, projectId: null };
+              const res = {
+                rootPath: resolved,
+                projectId: null,
+                isCli: false,
+                isSubagent: false,
+                lastUserInputMs: 0,
+              };
               convSummaryCache.set(conversationId, res);
               return res;
             }
@@ -301,109 +328,133 @@ function resolveConversationWorkspace(agyDir, conversationId, hookActive) {
   } catch {
     // ignore fallback errors
   }
-
   return null;
 }
 
 /**
  * Detect the conversation currently viewed or active in the Antigravity UI by reading
  * annotations/<conversationId>.pbtxt (last_user_view_time) and conversation_summaries.db.
+ * Only conversations mapping to currently registered projects are considered.
  */
-async function readUiActiveConversation(hookActive) {
-  let best = null; // { conversationId, rootPath, projectId, signalTime }
+async function readUiActiveConversation(projects) {
+  let best = null; // { conversationId, project, signalTime, lastUserInputMs }
+  const sqlite = getSqlite();
 
   for (const agyDir of AGY_UI_DIRS) {
-    const annDir = path.join(agyDir, 'annotations');
-    try {
-      const files = (await fs.readdir(annDir)).filter((f) => f.endsWith('.pbtxt'));
-      const stats = await Promise.all(
-        files.map(async (file) => {
-          try {
-            const full = path.join(annDir, file);
-            const st = await fs.stat(full);
-            return { file, full, mtimeMs: Math.round(st.mtimeMs || 0) };
-          } catch {
-            return null;
-          }
-        }),
-      );
-      const topFiles = stats
-        .filter(Boolean)
-        .sort((a, b) => b.mtimeMs - a.mtimeMs)
-        .slice(0, 15);
-
-      for (const item of topFiles) {
-        try {
-          const raw = await fs.readFile(item.full, 'utf8');
-          const m = raw.match(
-            /last_user_view_time:\s*\{\s*seconds:\s*(\d+)(?:\s+nanos:\s*(\d+))?\s*\}/,
-          );
-          const viewTimeMs = m
-            ? Number(m[1]) * 1000 + Math.round(Number(m[2] || 0) / 1e6)
-            : item.mtimeMs;
-          if (best && viewTimeMs <= best.signalTime) continue;
-
-          const conversationId = item.file.replace(/\.pbtxt$/, '');
-          const resolved = resolveConversationWorkspace(agyDir, conversationId, hookActive);
-          if (resolved && (resolved.rootPath || resolved.projectId)) {
-            best = {
-              conversationId,
-              rootPath: resolved.rootPath,
-              projectId: resolved.projectId,
-              signalTime: viewTimeMs,
-            };
-          }
-        } catch {
-          // ignore unreadable annotation file
-        }
-      }
-    } catch {
-      // annotations dir missing
-    }
-
-    // Also check latest user input conversation in conversation_summaries.db
-    const sqlite = getSqlite();
+    let db = null;
+    let convStmt = null;
     const dbPath = path.join(agyDir, 'conversation_summaries.db');
     if (sqlite?.DatabaseSync && fsSync.existsSync(dbPath)) {
-      let db;
       try {
         db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
-        const row = db
-          .prepare(
-            `SELECT conversation_id, workspace_uris, project_id, last_user_input_time
-             FROM conversation_summaries
-             WHERE source != 'CORTEX_TRAJECTORY_SOURCE_CLI' AND nesting_depth = 0
-             ORDER BY last_user_input_time DESC
-             LIMIT 1`,
-          )
-          .get();
-        if (row) {
-          const inputMs = Date.parse(row.last_user_input_time || '') || 0;
-          if (!best || inputMs > best.signalTime) {
-            const rootPath = parseRootFromUrisJson(row.workspace_uris);
-            const projectId =
-              row.project_id && row.project_id !== 'default-cli-project' ? row.project_id : null;
-            if (rootPath) {
-              sessionAllowedRoots.set(normalizePathKey(rootPath), rootPath);
+        convStmt = db.prepare(
+          'SELECT workspace_uris, project_id, parent_conversation_id, source, nesting_depth, last_user_input_time FROM conversation_summaries WHERE conversation_id = ?',
+        );
+      } catch {
+        db = null;
+        convStmt = null;
+      }
+    }
+
+    try {
+      const annDir = path.join(agyDir, 'annotations');
+      try {
+        const files = (await fs.readdir(annDir)).filter((f) => f.endsWith('.pbtxt'));
+        const stats = await Promise.all(
+          files.map(async (file) => {
+            try {
+              const full = path.join(annDir, file);
+              const st = await fs.stat(full);
+              return { file, full, mtimeMs: Math.round(st.mtimeMs || 0) };
+            } catch {
+              return null;
             }
-            if (rootPath || projectId) {
+          }),
+        );
+        const topFiles = stats
+          .filter(Boolean)
+          .sort((a, b) => b.mtimeMs - a.mtimeMs)
+          .slice(0, 20);
+
+        for (const item of topFiles) {
+          try {
+            const raw = await fs.readFile(item.full, 'utf8');
+            const m = raw.match(
+              /last_user_view_time:\s*\{\s*seconds:\s*(\d+)(?:\s+nanos:\s*(\d+))?\s*\}/,
+            );
+            const viewTimeMs = m
+              ? Number(m[1]) * 1000 + Math.round(Number(m[2] || 0) / 1e6)
+              : item.mtimeMs;
+            if (best && viewTimeMs + 50 < best.signalTime) continue;
+
+            const conversationId = item.file.replace(/\.pbtxt$/, '');
+            const info =
+              (convStmt ? queryConversationMetaFromDb(convStmt, conversationId) : null) ||
+              resolveConversationFallbackPb(agyDir, conversationId);
+            if (!info || info.isCli || info.isSubagent) continue;
+
+            const matchedProject = matchRegisteredProject(projects, info);
+            if (!matchedProject) continue;
+
+            const isNewer =
+              !best ||
+              viewTimeMs > best.signalTime + 50 ||
+              (Math.abs(viewTimeMs - best.signalTime) <= 50 &&
+                (info.lastUserInputMs || 0) > (best.lastUserInputMs || 0));
+
+            if (isNewer) {
               best = {
-                conversationId: row.conversation_id,
-                rootPath,
-                projectId,
-                signalTime: inputMs,
+                conversationId,
+                project: matchedProject,
+                signalTime: viewTimeMs,
+                lastUserInputMs: info.lastUserInputMs || 0,
               };
             }
+          } catch {
+            // ignore unreadable annotation file
           }
         }
       } catch {
-        // ignore
-      } finally {
+        // annotations dir missing
+      }
+
+      // Also check latest user input conversations in conversation_summaries.db
+      if (db) {
         try {
-          db?.close();
+          const rows = db
+            .prepare(
+              `SELECT conversation_id, workspace_uris, project_id, last_user_input_time
+               FROM conversation_summaries
+               WHERE source != 'CORTEX_TRAJECTORY_SOURCE_CLI' AND nesting_depth = 0
+               ORDER BY last_user_input_time DESC
+               LIMIT 10`,
+            )
+            .all();
+          for (const row of rows) {
+            const inputMs = Date.parse(row.last_user_input_time || '') || 0;
+            if (best && inputMs <= best.signalTime) break;
+            const rootPath = parseRootFromUrisJson(row.workspace_uris);
+            const projectId =
+              row.project_id && row.project_id !== 'default-cli-project' ? row.project_id : null;
+            const matchedProject = matchRegisteredProject(projects, { rootPath, projectId });
+            if (!matchedProject) continue;
+            best = {
+              conversationId: row.conversation_id,
+              project: matchedProject,
+              signalTime: inputMs,
+              lastUserInputMs: inputMs,
+            };
+            break;
+          }
         } catch {
           // ignore
         }
+      }
+    } finally {
+      try {
+        db?.close();
+      } catch {
+        // ignore
       }
     }
   }
@@ -499,8 +550,6 @@ async function detectClientRoots() {
 
 async function getAllowedProjectsMap() {
   const map = new Map(); // normalizedKey -> projectObj
-  const hookActive = await readHookActiveWorkspace();
-  await readUiActiveConversation(hookActive);
   const known = await loadAntigravityProjects();
   for (const p of known) {
     map.set(normalizePathKey(p.rootPath), p);
@@ -1297,7 +1346,6 @@ async function resolveContext(explicitRootPath, extra) {
     readHookActiveWorkspace(),
     readState(),
   ]);
-  const uiActive = await readUiActiveConversation(hookActive);
 
   const projects = [...knownProjects];
   const keySet = new Set(projects.map((p) => normalizePathKey(p.rootPath)));
@@ -1365,55 +1413,34 @@ async function resolveContext(explicitRootPath, extra) {
   }
 
   // 3. Live Antigravity UI focused conversation (annotations/*.pbtxt + conversation_summaries.db)
-  //    compared with initial turn lifecycle hook (.workspace-explorer-active.json)
+  //    compared with validated lifecycle hook (.workspace-explorer-active.json).
+  //    Strictly resolve ONLY against currently registered Antigravity projects.
   if (!activeProject) {
-    let uiProj = null;
-    let uiTime = 0;
-    if (uiActive) {
-      if (uiActive.rootPath) {
-        const uk = normalizePathKey(uiActive.rootPath);
-        uiProj =
-          projects.find((p) => normalizePathKey(p.rootPath) === uk) ||
-          projects.find((p) => isSubPath(p.rootPath, uiActive.rootPath));
-      }
-      if (!uiProj && uiActive.projectId) {
-        uiProj = projects.find((p) => p.id === uiActive.projectId) || null;
-      }
-      if (!uiProj && uiActive.rootPath) {
-        const uk = normalizePathKey(uiActive.rootPath);
-        uiProj = {
-          id: `chat:${uk}`,
-          name: path.basename(uiActive.rootPath),
-          rootPath: uiActive.rootPath,
-          uri: localPathToUri(uiActive.rootPath),
-        };
-        if (!keySet.has(uk)) {
-          projects.unshift(uiProj);
-          keySet.add(uk);
-        }
-      }
-      if (uiProj) {
-        uiTime = uiActive.signalTime || 0;
-      }
-    }
+    const uiActive = await readUiActiveConversation(projects);
+    const uiProj = uiActive?.project || null;
+    const uiTime = uiProj ? uiActive.signalTime || 0 : 0;
 
     let hookProj = null;
     let hookTime = 0;
     if (hookActive?.rootPath) {
-      const hk = normalizePathKey(hookActive.rootPath);
-      hookProj =
-        projects.find((p) => normalizePathKey(p.rootPath) === hk) ||
-        projects.find((p) => isSubPath(p.rootPath, hookActive.rootPath)) || {
-          id: `chat:${hk}`,
-          name: path.basename(hookActive.rootPath),
+      const hookDbInfo = hookActive.conversationId
+        ? lookupConversationMeta(hookActive.conversationId)
+        : null;
+      const isIgnoredBg = Boolean(hookDbInfo?.isCli || hookDbInfo?.isSubagent);
+      if (!isIgnoredBg) {
+        hookProj = matchRegisteredProject(projects, {
           rootPath: hookActive.rootPath,
-          uri: localPathToUri(hookActive.rootPath),
-        };
-      if (!keySet.has(hk)) {
-        projects.unshift(hookProj);
-        keySet.add(hk);
+          projectId: hookDbInfo?.projectId || null,
+        });
+        if (hookProj) {
+          const rawHookTime = hookActive.updatedAt || 0;
+          const dbInputMs = hookDbInfo?.lastUserInputMs || 0;
+          // If the hook fired >15s after the conversation's last_user_input_time, it came from
+          // a background wakeup/continuation rather than a new user message; cap to dbInputMs.
+          hookTime =
+            dbInputMs > 0 && rawHookTime - dbInputMs > 15_000 ? dbInputMs : rawHookTime;
+        }
       }
-      hookTime = hookActive.updatedAt || 0;
     }
 
     if (uiProj && (!hookProj || uiTime >= hookTime)) {

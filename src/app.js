@@ -3209,14 +3209,38 @@ async function syncActiveWorkspace(forceInitialCheck = false) {
   syncingWorkspace = true;
   try {
     const info = await callTool('check_active_workspace', {});
-    if (!info?.activeProject) return;
+    if (!info) return;
+
+    // Keep project list synchronized with Antigravity's registered projects
+    let activeRemoved = false;
+    if (Array.isArray(info.projects)) {
+      const prevKeys = state.projects.map((p) => p.rootPath).join('\0');
+      const nextKeys = info.projects.map((p) => p.rootPath).join('\0');
+      if (prevKeys !== nextKeys) {
+        state.projects = info.projects;
+        if (
+          state.activeProject &&
+          !state.projects.some((p) => p.rootPath === state.activeProject.rootPath)
+        ) {
+          activeRemoved = true;
+        }
+        renderHeader();
+        if (state.viewMode === 'all') renderTree();
+      }
+    }
+
+    if (!info.activeProject) return;
     const sig = Number(info.signalTime) || 0;
     const convChanged =
       Boolean(info.activeConversationId) &&
       info.activeConversationId !== state.lastAutoConversationId;
-    const shouldSwitch =
-      state.manualOverrideAt > 0
-        ? sig > state.manualOverrideAt && (sig > state.lastAutoSignalTime || convChanged)
+
+    // If the user manually selected a project in the dropdown, keep their manual choice
+    // until they switch to a DIFFERENT conversation (not merely a view-time tick on the same chat).
+    const shouldSwitch = activeRemoved
+      ? true
+      : state.manualOverrideAt > 0
+        ? sig > state.manualOverrideAt && convChanged
         : forceInitialCheck === true || convChanged || sig > state.lastAutoSignalTime;
 
     if (shouldSwitch) {
@@ -3226,11 +3250,8 @@ async function syncActiveWorkspace(forceInitialCheck = false) {
       if (info.activeConversationId) {
         state.lastAutoConversationId = info.activeConversationId;
       }
-      if (state.manualOverrideAt > 0 && sig > state.manualOverrideAt) {
+      if (state.manualOverrideAt > 0 && (sig > state.manualOverrideAt || activeRemoved)) {
         state.manualOverrideAt = 0;
-      }
-      if (Array.isArray(info.projects) && info.projects.length > 0) {
-        state.projects = info.projects;
       }
       const nextRoot = info.activeProject.rootPath;
       if (state.viewMode !== 'single' || state.activeProject?.rootPath !== nextRoot) {
@@ -3240,6 +3261,8 @@ async function syncActiveWorkspace(forceInitialCheck = false) {
         state.detectedBy = info.detectedBy || state.detectedBy;
         renderHeader();
       }
+    } else if (state.manualOverrideAt > 0 && sig > state.lastAutoSignalTime) {
+      state.lastAutoSignalTime = sig;
     }
   } catch {
     // ignore transient poll errors
